@@ -1,9 +1,9 @@
 # batch integration
 library(tidyverse)
 library(sva)
-library(CRISPRcleanRatSquared)
 library(reshape2)
-setwd("/group/iorio/lucia/datasets/ENCORE_SAMPLES_COPYNUMBER/DATA_FREEZE_v4/")
+fold_data <- "/group/iorio/lucia/datasets/ENCORE_SAMPLES_COPYNUMBER/DATA_FREEZE_v4/"
+
 source("batch_integration_functions.R")
 
 lib_name <- c("COLO1", "COLO2", "COLO3", 
@@ -14,7 +14,7 @@ for (i in 1:length(lib_name)) {
   
   curr_lib <- lib_name[i]
   print(curr_lib)
-  data[[i]] <- read_csv(sprintf("%s_FINAL_EXACT_logFC_sgRNA_scaled.txt", curr_lib))  
+  data[[i]] <- read_csv(sprintf("%s%s_FINAL_EXACT_logFC_sgRNA_scaled.txt", fold_data, curr_lib))  
   
   # load lib
   if (grepl("COLO", curr_lib)) {
@@ -23,7 +23,7 @@ for (i in 1:length(lib_name)) {
     part1 <- "BRCA"
   }
   part2 <- stringr::str_sub(curr_lib, start = 5, end = 5)
-  lib_file_name <- sprintf("LIBS/ENCORE_GI_%s_Library_%s.txt", part1, part2)
+  lib_file_name <- sprintf("%sLIBS/ENCORE_GI_%s_Library_%s.txt", fold_data, part1, part2)
   
   library[[i]] <- readr::read_tsv(lib_file_name,
     col_types = readr::cols(.default = "?", 
