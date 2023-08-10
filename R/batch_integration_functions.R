@@ -1,4 +1,4 @@
-# modify combat function
+# modify combat function from DepMap -  Sanger integration paper
 ComBatCP <- function(dat, batch, mod = NULL, par.prior = TRUE, prior.plots = FALSE,
                      mean.only = FALSE, ref.batch = NULL, BPPARAM = bpparam("SerialParam"),
                      empBayes=TRUE) {
@@ -244,31 +244,45 @@ ComBatCP <- function(dat, batch, mod = NULL, par.prior = TRUE, prior.plots = FAL
               stdmean = stand.mean))
 }
 
-combat_correction_oppositesize <- function(list_df){
+# get common CLs across a list of screens
+# extract only raw logFCs and convert to matrices
+harmonize_per_CL <- function(list_df){
+  
+  # rename columns
+  mat <- list()
+  for (i in 1:length(list_df)) {
+    tmp <- as.data.frame(list_df[[i]])
+    rownames(tmp) <- tmp$SEQ_pair
+    tmp <- tmp[, grepl("_LFC_RAW",colnames(tmp))]
+    colnames(tmp) <- str_split_fixed(string = colnames(tmp), pattern = "[_]", n = 4)[,1]
+    colnames(tmp) <- model_encore_table$model_name_CMP[match(colnames(tmp), model_encore_table$model_id_CMP)]
+    mat[[i]] <- t(tmp) 
+  }
+  
+  common_CL <- base::Reduce(intersect,lapply(mat, rownames))
+  data_common <- lapply(mat, function(x) x[common_CL, ])
+  
+  names(data_common) <- names(list_df)
+  return(data_common)
+  
+}
+
+# perform combat correction (per guide pairs)
+combat_correction <- function(list_df){
   
   list_df_h <- harmonize_per_CL(list_df)
-  common_pairs <- base::Reduce(intersect, lapply(list_df, function(x) unique(x$SEQ_pair)))
-  #data_common <- lapply(list_df_h, function(x)
-  #  x[match(common_pairs , x$SEQ_pair), grepl("_LFC_RAW",colnames(x))])
+  common_pairs <- base::Reduce(intersect, 
+                               lapply(list_df, function(x) unique(x$SEQ_pair)))
+  
   data_common <- lapply(list_df_h, function(x) t(x[, common_pairs]))
   for (i in 1:length(data_common)) {
     colnames(data_common[[i]]) <- paste(colnames(data_common[[i]]), names(list_df)[i], sep = "_")
   }
-  # mat <- list()
-  # for (i in 1:length(data_common)) {
-  # 
-  #   tmp <- data_common[[i]]
-  #   colnames(tmp) <- str_split_fixed(string = colnames(tmp), pattern = "[_]", n = 4)[,1]
-  #   colnames(tmp) <- paste0(
-  #     model_encore_table$model_name_CMP[match(colnames(tmp), model_encore_table$model_id_CMP)],
-  #     "_", names(data_common)[i])
-  #   mat[[i]] <- tmp
-  # }
-
+  
   tot_mat <- do.call(cbind, data_common)
-  # rownames(tot_mat) <- common_pairs
-  ComBat_res <- ComBatCP(dat = as.matrix(tot_mat),
-                         batch = str_split_fixed(colnames(tot_mat), pattern = "_", n = 2)[,2])
+  ComBat_res <- ComBatCP(
+    dat = as.matrix(tot_mat),
+    batch = str_split_fixed(colnames(tot_mat), pattern = "_", n = 2)[,2])
   corrected <- as.data.frame(ComBat_res$correctedData)
 
   # annotate combat res and plot
@@ -295,8 +309,8 @@ combat_correction_oppositesize <- function(list_df){
   df_ComBat_param <- rbind(df_ComBat_param_gamma, df_ComBat_param_delta) %>%
     left_join(df_annot_unique, by = "SEQ_pair")
   
-  # plot dist
-  pl <- ggplot(df_ComBat_param, 
+  # plot dist of parameters
+  pl_lib <- ggplot(df_ComBat_param, 
                 aes(x = lib, y = value, fill = lib)) + 
     geom_violin() + 
     geom_boxplot(fill = "white", outlier.size = 1, width = 0.2) + 
@@ -314,7 +328,7 @@ combat_correction_oppositesize <- function(list_df){
     ylab("ComBat param estimates") +
     coord_flip()
   
-  print(pl)
+  print(pl_lib)
   print(pl_class)
   
   return(list(raw = tot_mat,
@@ -322,106 +336,66 @@ combat_correction_oppositesize <- function(list_df){
               ComBat_res = ComBat_res))
 }
 
-harmonize_per_CL <- function(list_df){
- 
-  # rename columns
-  mat <- list()
-  for (i in 1:length(list_df)) {
-    tmp <- as.data.frame(list_df[[i]])
-    rownames(tmp) <- tmp$SEQ_pair
-    tmp <- tmp[, grepl("_LFC_RAW",colnames(tmp))]
-    colnames(tmp) <- str_split_fixed(string = colnames(tmp), pattern = "[_]", n = 4)[,1]
-    colnames(tmp) <- model_encore_table$model_name_CMP[match(colnames(tmp), model_encore_table$model_id_CMP)]
-    mat[[i]] <- t(tmp) 
-  }
+# PC plot for common pairs
+# plot before and after combat correction
+pca_commonpairs_function <- function(list_df){
   
-  common_CL <- base::Reduce(intersect,lapply(mat, rownames))
-  data_common <- lapply(mat, function(x) x[common_CL, ])
+  res <- combat_correction(list_df)
+  corrected_common <- res$corrected
+  raw_common <- res$raw
+  common_pairs <- rownames(raw_common)
   
-  names(data_common) <- names(list_df)
-  return(data_common)
+  # pc from corrected data
+  pca_common <- prcomp(t(corrected_common), scale. = TRUE)
+  pc_corr <- data.frame(pca_common$x,
+                        CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
+                        lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
+  pc_corr$lib <- factor(pc_corr$lib)
+  pc_corr$CL <- factor(pc_corr$CL)
+  
+  pl1 <- ggplot(pc_corr, aes(x = PC1,
+                             y = PC2,
+                             col = CL,
+                             label = CL,
+                             group = CL)) +
+    geom_point(size = 2, aes(shape = lib)) +
+    geom_line(alpha = 0.5) + 
+    geom_text_repel(size = 2) +
+    guides(color = "none") +
+    theme_bw() +
+    ggtitle("ComBat corrected",
+            subtitle = paste0("N. common guide pairs: ", length(common_pairs)))
+  
+  # pc from raw data
+  pca_common <- prcomp(t(raw_common), scale. = TRUE)
+  pc_raw <- data.frame(pca_common$x,
+                       CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
+                       lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
+  pc_raw$lib <- factor(pc_raw$lib)
+  pc_raw$CL <- factor(pc_raw$CL)
+  pl2 <- ggplot(pc_raw, aes(x = PC1,
+                            y = PC2,
+                            col = CL,
+                            label = CL,
+                            group = CL)) +
+    geom_point(size = 2, aes(shape = lib)) +
+    geom_line(alpha = 0.5) + 
+    geom_text_repel(size = 2) +
+    theme_bw() +
+    guides(color = "none") +
+    ggtitle("Raw logFC",
+            subtitle = paste0("N. common guide pairs: ", length(common_pairs)))
+  pl <- ggpubr::ggarrange(plotlist = list(pl2, pl1), ncol = 2, common.legend = TRUE)
+  print(pl)
+  
+  return(list(common_pairs = common_pairs,
+              pc_corr = pc_corr,
+              pc_raw = pc_raw))
   
 }
 
-combat_correction <- function(list_df, mat_harm = NULL){
-  
-  if(is.null(mat_harm)){
-    mat <- harmonize_per_CL(list_df)  
-  }else{
-    mat <- mat_harm
-  }
-  
-  common_pairs <- base::Reduce(intersect, lapply(list_df, function(x) unique(x$SEQ_pair)))
-  data_common <- lapply(mat, function(x) x[, common_pairs])
-  for (i in 1:length(data_common)) {
-    colnames(data_common[[i]]) <- paste(colnames(data_common[[i]]), names(list_df)[i], sep = "_")
-  }
-  
-  tot_mat <- do.call(cbind, data_common)
-  ComBat_res <- ComBatCP(dat = as.matrix(tot_mat), 
-                         batch = str_split_fixed(colnames(tot_mat), pattern = "_", n = 2)[,2])
-  corrected <- ComBat_res$correctedData
-  
-  return(list(raw = tot_mat, 
-              corrected = corrected, 
-              common_pairs = common_pairs,
-              ComBat_res = ComBat_res))
-}
 
-# adjust all data (coeff per cl)
-adjust_alldata_percl <- function(list_df, mat_harm = NULL){
-
-  combat_res_all <- combat_correction(list_df = list_df, mat_harm)
-  combat_res <- combat_res_all$ComBat_res
-  list_logFC <- harmonize_per_CL(list_df)
-  n_cl <- nrow(combat_res$correctedData)
-
-  # get combat param
-  batch.design <- combat_res$batchDesign
-  gamma.star <- combat_res$gamma.star # mean
-  delta.star <- combat_res$delta.star # var
-  stand.mean <- combat_res$stdmean
-  var.pooled <- combat_res$varpool
-
-  # find mean and var for all guide pairs
-  stand.mean_all <- lapply(list_logFC, function(x) rowMeans(x) %*% t(rep(1, ncol(x))))
-  var.pooled_all <- lapply(list_logFC, function(x) rowSds(x) %*% t(rep(1, ncol(x))))
-  s.data_all <- mapply(function(x,y,z) (x - y)/z,
-                       x = list_logFC,
-                       y = stand.mean_all,
-                       z = var.pooled_all,
-                       SIMPLIFY = FALSE)
-
-  # correct based on bayes estimates
-  colnames(gamma.star) <- rownames(stand.mean)
-  mean_all <- mapply(function(x, y)
-    matrix(gamma.star[x,], nrow = n_cl, ncol = ncol(y)),
-    x = 1:nrow(gamma.star), y = list_logFC)
-
-  colnames(delta.star) <- rownames(stand.mean)
-  var_all <- mapply(function(x, y)
-    sqrt(delta.star[x,]) %*% t(rep(1,ncol(y))),
-    x = 1:nrow(delta.star), y = list_logFC)
-
-  adjusted.data_all <- mapply(function(x,y,z) (x - y)/z,
-                              x = s.data_all,
-                              y =  mean_all,
-                              z = var_all,
-                              SIMPLIFY = FALSE)
-
-  # add original mean and variance back
-  adjusted.data_all <- mapply(function(x,y,z) (x*z) + y,
-                              x = adjusted.data_all,
-                              y = stand.mean_all,
-                              z = var.pooled_all,
-                              SIMPLIFY = FALSE)
-
-  return(list(adj = adjusted.data_all, original = list_logFC,
-              combat = combat_res_all))
-
-}
-
-# v2: use the opposite size correction and average for the non matching guides
+# adjust data, combat estimates per guide pairs
 adjust_alldata <- function(list_df){
 
 combat_res_all <- combat_correction_oppositesize(list_df = list_df)
@@ -668,62 +642,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
 
 
 
-# PC plot
-pca_commonpairs_oppositesize_function <- function(list_df){
 
-  res <- combat_correction_oppositesize(list_df)
-  corrected_common <- res$corrected
-  raw_common <- res$raw
-  common_pairs <- rownames(raw_common)
-
-  # pc from corrected data
-  pca_common <- prcomp(t(corrected_common), scale. = TRUE)
-  pc_corr <- data.frame(pca_common$x,
-                        CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
-                        lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
-  pc_corr$lib <- factor(pc_corr$lib)
-  pc_corr$CL <- factor(pc_corr$CL)
-
-  pl1 <- ggplot(pc_corr, aes(x = PC1,
-                             y = PC2,
-                             col = CL,
-                             label = CL,
-                             group = CL)) +
-    geom_point(size = 2, aes(shape = lib)) +
-    geom_line(alpha = 0.5) + 
-    geom_text_repel(size = 2) +
-    guides(color = "none") +
-    theme_bw() +
-    ggtitle("ComBat corrected",
-            subtitle = paste0("N. common guide pairs: ", length(common_pairs)))
-
-  # pc from raw data
-  pca_common <- prcomp(t(raw_common), scale. = TRUE)
-  pc_raw <- data.frame(pca_common$x,
-                       CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
-                       lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
-  pc_raw$lib <- factor(pc_raw$lib)
-  pc_raw$CL <- factor(pc_raw$CL)
-  pl2 <- ggplot(pc_raw, aes(x = PC1,
-                            y = PC2,
-                            col = CL,
-                            label = CL,
-                            group = CL)) +
-    geom_point(size = 2, aes(shape = lib)) +
-    geom_line(alpha = 0.5) + 
-    geom_text_repel(size = 2) +
-    theme_bw() +
-    guides(color = "none") +
-    ggtitle("Raw logFC",
-            subtitle = paste0("N. common guide pairs: ", length(common_pairs)))
-  pl <- ggpubr::ggarrange(plotlist = list(pl2, pl1), ncol = 2, common.legend = TRUE)
-  print(pl)
-
-  return(list(common_pairs = rownames(combat_correction),
-              pc_corr = pc_corr,
-              pc_raw = pc_raw))
-
-}
 
 # get correlation
 dist_commonpairs <- function(mat_common){
@@ -745,47 +664,9 @@ dist_commonpairs <- function(mat_common){
               CLs = data.frame(name = names(inner_CLs), inner = inner_CLs, outer = outer_CLs)))
 }
 
-plot_dist_commonpairs <- function(list_df = NULL, mat_raw_corrected = NULL, oppositesize = FALSE){
+plot_dist_commonpairs <- function(list_df){
   
-  if (!is.null(list_df)) {
-    if (oppositesize) {
-      res_combat <- combat_correction_oppositesize(list_df)
-    }else{
-      res_combat <- combat_correction(list_df)
-      corrected_common <- res_combat$corrected
-      raw_common <- res_combat$raw
-      common_CL <- rownames(raw_common)
-      common_pairs <- res_combat$common_pairs
-      libs <- unique(str_split_fixed(colnames(raw_common), pattern = "_", n = 2)[,2])
-      
-      # reorder
-      mat_corr <- list()
-      mat_raw <- list()
-      for (i in 1:length(libs)) {
-        # corrected
-        tmp <- corrected_common[, grepl(libs[i], colnames(corrected_common))]
-        colnames(tmp) <- str_split_fixed(colnames(tmp), pattern = "_", n = 2)[,1]
-        tmp <- tmp[, common_pairs]
-        rownames(tmp) <- paste(rownames(tmp), libs[i], sep = "_")
-        mat_corr[[i]] <- tmp
-        
-        #raw
-        tmp <- raw_common[, grepl(libs[i], colnames(corrected_common))]
-        colnames(tmp) <- str_split_fixed(colnames(tmp), pattern = "_", n = 2)[,1]
-        tmp <- tmp[, common_pairs]
-        rownames(tmp) <- paste(rownames(tmp), libs[i], sep = "_")
-        mat_raw[[i]] <- tmp
-      }
-      res_combat$corrected <- t(do.call(rbind, mat_corr))
-      res_combat$raw <- t(do.call(rbind, mat_raw))
-    }
-  }else{
-    if (is.null(mat_raw_corrected)) {
-      stop("one between  mat_raw_corrected and list_df muts be not null")
-    }
-    print("use PCs corrected results")
-    res_combat <- mat_raw_corrected
-  }
+  res_combat <- combat_correction(list_df)
   
   dist_raw <- dist_commonpairs(res_combat$raw)
   dist_combat <- dist_commonpairs(res_combat$corrected)
@@ -826,134 +707,5 @@ plot_dist_commonpairs <- function(list_df = NULL, mat_raw_corrected = NULL, oppo
   
 }
 
-pca_commonpairs_function <- function(list_df, correct_for_PCs = FALSE){
-  
-  res <- combat_correction(list_df)  
-  corrected_common <- res$corrected
-  raw_common <- res$raw
-  common_CL <- rownames(raw_common)
-  common_pairs <- res$common_pairs
-  libs <- unique(str_split_fixed(colnames(raw_common), pattern = "_", n = 2)[,2])
-  drop_pc_raw <- NULL
-  drop_pc_corr <- NULL
-  raw_PCcorr <- NULL
-  adjusted_PCcorr <- NULL
-  
-  # pc from corrected data
-  mat_corr <- list()
-  mat_raw <- list()
-  for (i in 1:length(libs)) {
-    # corrected
-    tmp <- corrected_common[, grepl(libs[i], colnames(corrected_common))]
-    colnames(tmp) <- str_split_fixed(colnames(tmp), pattern = "_", n = 2)[,1]
-    tmp <- tmp[, common_pairs]
-    rownames(tmp) <- paste(rownames(tmp), libs[i], sep = "_")
-    mat_corr[[i]] <- tmp
-    
-    #raw
-    tmp <- raw_common[, grepl(libs[i], colnames(corrected_common))]
-    colnames(tmp) <- str_split_fixed(colnames(tmp), pattern = "_", n = 2)[,1]
-    tmp <- tmp[, common_pairs]
-    rownames(tmp) <- paste(rownames(tmp), libs[i], sep = "_")
-    mat_raw[[i]] <- tmp
-  }
-  
-  tot_corr <- do.call(rbind, mat_corr)
-  pca_common <- prcomp(tot_corr, scale. = TRUE)
-  pc_corr <- data.frame(pca_common$x, 
-                        CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
-                        lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
-  pc_corr$lib <- factor(pc_corr$lib)
-  pc_corr$CL <- factor(pc_corr$CL)
-  
-  if (correct_for_PCs) {
-    
-    tmp_CL <- apply(pca_common$x, 2, function(x) kruskal.test(x = x, g = pc_corr$CL)$p.value)
-    tmp_lib <- apply(pca_common$x, 2, function(x) kruskal.test(x = x, g = pc_corr$lib)$p.value)
-    drop_pc_corr <- setdiff(which(tmp_lib <= 0.01), which(tmp_CL <= 0.01))
-    npcas <- 1:nrow(tot_corr)
-    pcause <- npcas[!npcas %in% drop_pc_corr]
-    df.denoised <- pca_common$x[,pcause] %*% t(pca_common$rotation[,pcause])
-    df.denoised <- t(df.denoised)
-    correctedData <- df.denoised*pca_common$scale + pca_common$center
-    pca_common <- prcomp(t(correctedData), scale. = TRUE)
-    
-    pc_corr <- data.frame(pca_common$x, 
-                          CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
-                          lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
-    pc_corr$lib <- factor(pc_corr$lib)
-    pc_corr$CL <- factor(pc_corr$CL)
-    adjusted_PCcorr <- t(correctedData)
-  }
-  
-  
-  pl1 <- ggplot(pc_corr, aes(x = PC1,
-                            y = PC2,
-                            col = CL,
-                            label = CL,
-                            group = CL)) +
-    geom_point(size = 2, aes(shape = lib)) +
-    geom_line(alpha = 0.5) + 
-    geom_text_repel(size = 2) +
-    guides(color = "none") +
-    theme_bw() + 
-    ggtitle("ComBat corrected", 
-            subtitle = paste0("N. common guide pairs: ", length(common_pairs)))
-  
-  # pc from raw data
-  tot_raw <- do.call(rbind, mat_raw)
-  pca_common <- prcomp(tot_raw, scale. = TRUE)
-  pc_raw <- data.frame(pca_common$x[, 1:5], 
-                       CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
-                       lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
-  pc_raw$lib <- factor(pc_raw$lib)
-  pc_raw$CL <- factor(pc_raw$CL)
-  
-  if (correct_for_PCs) {
-    
-    tmp_CL <- apply(pca_common$x, 2, function(x) kruskal.test(x = x, g = pc_corr$CL)$p.value)
-    tmp_lib <- apply(pca_common$x, 2, function(x) kruskal.test(x = x, g = pc_corr$lib)$p.value)
-    drop_pc_raw <- setdiff(which(tmp_lib <= 0.01), which(tmp_CL <= 0.01))
-    npcas <- 1:nrow(tot_raw)
-    pcause <- npcas[!npcas %in% drop_pc_raw]
-    df.denoised <- pca_common$x[,pcause] %*% t(pca_common$rotation[,pcause])
-    df.denoised <- t(df.denoised)
-    correctedData <- df.denoised*pca_common$scale + pca_common$center
-    pca_common <- prcomp(t(correctedData), scale. = TRUE)
-    
-    pc_raw <- data.frame(pca_common$x, 
-                          CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
-                          lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
-    pc_raw$lib <- factor(pc_corr$lib)
-    pc_raw$CL <- factor(pc_corr$CL)
-    raw_PCcorr <- t(correctedData)
-  }
-  
-  
-  pl2 <- ggplot(pc_raw, aes(x = PC1,
-                            y = PC2,
-                            col = CL,
-                            label = CL,
-                            group = CL)) +
-    geom_point(size = 2, aes(shape = lib)) +
-    geom_line(alpha = 0.5) + 
-    geom_text_repel(size = 2) +
-    theme_bw() + 
-    guides(color = "none") +
-    ggtitle("Raw logFC", 
-            subtitle = paste0("N. common guide pairs: ", length(common_pairs)))
-  pl <- ggpubr::ggarrange(plotlist = list(pl2, pl1), ncol = 2, common.legend = TRUE)
-  print(pl)
-  
-  return(list(common_pairs = common_pairs,
-              common_CL = common_CL,
-              pc_corr = pc_corr,
-              pc_raw = pc_raw, 
-              adjusted_PCcorr = adjusted_PCcorr,
-              raw_PCcorr = raw_PCcorr,
-              drop_pc_corr = drop_pc_corr, 
-              drop_pc_raw = drop_pc_raw))
-  
-}
 
 
