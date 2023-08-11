@@ -2,9 +2,16 @@
 library(tidyverse)
 library(sva)
 library(reshape2)
-fold_data <- "/group/iorio/lucia/datasets/ENCORE_SAMPLES_COPYNUMBER/DATA_FREEZE_v4/"
+library(ggplot2)
+library(ggrepel)
+source("R/batch_integration_functions.R")
 
-source("batch_integration_functions.R")
+#### 
+fold <- "/group/iorio/lucia/datasets/ENCORE_SAMPLES_COPYNUMBER/DATA_FREEZE_v4/"
+fold_input <- sprintf("%sORIGINAL/", fold)
+fold_lib <- sprintf("%sLIBS/", fold)
+fold_output <- sprintf("%sBATCH_CORRECTED/", fold)
+####
 
 lib_name <- c("COLO1", "COLO2", "COLO3", 
               "BRCA1", "BRCA2", "BRCA3")
@@ -14,7 +21,7 @@ for (i in 1:length(lib_name)) {
   
   curr_lib <- lib_name[i]
   print(curr_lib)
-  data[[i]] <- read_csv(sprintf("%s%s_FINAL_EXACT_logFC_sgRNA_scaled.txt", fold_data, curr_lib))  
+  data[[i]] <- read_csv(sprintf("%s%s_FINAL_EXACT_logFC_sgRNA_scaled.txt", fold_input, curr_lib))  
   
   # load lib
   if (grepl("COLO", curr_lib)) {
@@ -23,7 +30,7 @@ for (i in 1:length(lib_name)) {
     part1 <- "BRCA"
   }
   part2 <- stringr::str_sub(curr_lib, start = 5, end = 5)
-  lib_file_name <- sprintf("%sLIBS/ENCORE_GI_%s_Library_%s.txt", fold_data, part1, part2)
+  lib_file_name <- sprintf("%sENCORE_GI_%s_Library_%s.txt", fold_lib, part1, part2)
   
   library[[i]] <- readr::read_tsv(lib_file_name,
     col_types = readr::cols(.default = "?", 
@@ -71,7 +78,7 @@ CMP_table <- read_csv("https://cog.sanger.ac.uk/cmp/download/model_list_20230505
                 sample_id_CMP = sample_id, 
                 model_name_CMP = model_name)
 
-model_encore_table <- left_join(df, CMP_table, by = "model_id_CMP") %>%
+model_encore_table <- dplyr::left_join(df, CMP_table, by = "model_id_CMP") %>%
   mutate(model_name_uppercase = str_replace_all(model_name_CMP, "[-]", "")) %>%
   mutate(model_name_uppercase = toupper(model_name_uppercase))
 
@@ -87,69 +94,132 @@ CL_summary <- pheatmap::pheatmap(tab_count,
                                  cluster_cols = FALSE,
                                  treeheight_row = 0)
 
-### NOT PROPER BATCH CORRECTION! ###
-# batch correction and PCA only for common pairs
-# plot PCA (opposite size, impossible to correct all)
-common_COLO_os <- pca_commonpairs_oppositesize_function(data[1:3]) 
-common_BRCA_os <- pca_commonpairs_oppositesize_function(data[4:6])
+# plot PCA:
+common_COLO <- pca_commonpairs_function(data[1:3]) 
+common_BRCA <- pca_commonpairs_function(data[4:6]) 
 
-# get all corrected dataset
-data_COLO <- adjust_alldata(list_df = data[1:3])
-data_BRCA <- adjust_alldata(list_df = data[4:6])
+#### TEST ####
+list_df <- data[1:3]
+res <- combat_correction(list_df)
+corrected_common <- res$corrected
+raw_common <- res$raw
+common_pairs <- rownames(raw_common)
+matrix_data <- lapply(harmonize_per_CL(data[1:3]), function(x) 
+  x[,common_pairs])
 
-# plot distribution
-plot_CL_distribution(original = data_COLO$original, 
-                     adjusted = data_COLO$adj, 
-                     common_pairs = data_COLO$combat$common_pairs)
+# varying kNN
+kNN_list <- c(5, seq(10, 100, by = 10))
+df_kNN <- data.frame()
+for (kNN_p in kNN_list) {
+  print(kNN_p)
+  tmp <- lapply(1:length(list_df), function(x)
+    get_stat_closest(id_lib = x, 
+                     matrix_data = matrix_data, 
+                     combat_param = res$ComBat_res, 
+                     kNN = kNN_p))  
+  df_kNN <- rbind(do.call(rbind, tmp), df_kNN)
+}
 
-plot_CL_distribution(original = data_BRCA$original, 
-                     adjusted = data_BRCA$adj, 
-                     common_pairs = data_BRCA$combat$common_pairs)
+ggplot(df_kNN, aes(x = as.factor(kNN),
+                   y = cohens_d)) +
+  geom_boxplot() +
+  facet_wrap(.~type) +
+  theme_bw()
 
+# varying prob quantile
+quant_list <- c(0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
+df_quant <- data.frame()
+for (quant_p in quant_list) {
+  print(quant_p)
+  tmp <- lapply(1:length(list_df), function(x)
+    get_stat_closest(id_lib = x, 
+                     matrix_data = matrix_data, 
+                     combat_param = res$ComBat_res, 
+                     quant_prob = quant_p))  
+  df_quant  <- rbind(do.call(rbind, tmp), df_quant)
+}
 
-# get correlation
-plot_dist_commonpairs(list_df = data[1:3], oppositesize = TRUE)
-plot_dist_commonpairs(list_df = data[4:6], oppositesize = TRUE)
-
-### does it make sense to also correct per CL?
-### so far not working...
-data_COLO_percl <- adjust_alldata_percl(list_df = data[1:3], 
-                                        mat_harm = data_COLO$adj)
-plot_CL_distribution(original = data_COLO_percl$original, 
-                     adjusted = data_COLO_percl$adj, 
-                     common_pairs = data_COLO_percl$combat$common_pairs)
-
-### PROPER BATCH CORRECTION! ###
-# batch correction
-# plot PCA
-common_COLO <- pca_commonpairs_function(data[1:3])
-plot_dist_commonpairs(list_df = data[1:3], oppositesize = FALSE)
-
-common_BRCA <- pca_commonpairs_function(data[4:6])
-plot_dist_commonpairs(list_df = data[4:6], oppositesize = FALSE)
-
-# correct per PCs
-common_COLO_PCcorr <- pca_commonpairs_function(data[1:3], 
-                                               correct_for_PCs = TRUE)
-plot_dist_commonpairs(mat_raw_corrected = list(raw = t(common_COLO_PCcorr$raw_PCcorr), 
-                                               corrected = t(common_COLO_PCcorr$adjusted_PCcorr)))
-
-common_BRCA_PCcorr <- pca_commonpairs_function(data[4:6], 
-                                               correct_for_PCs = TRUE)
-plot_dist_commonpairs(mat_raw_corrected = list(raw = t(common_BRCA_PCcorr$raw_PCcorr), 
-                                               corrected = t(common_BRCA_PCcorr$adjusted_PCcorr)))
-
-# get all corrected dataset
-data_COLO <- adjust_alldata(list_df = data[1:3])
-data_BRCA <- adjust_alldata(list_df = data[4:6])
-
-# plot distribution
-plot_CL_distribution(original = data_COLO$original, 
-                     adjusted = data_COLO$adj, 
-                     common_pairs = data_COLO$combat$common_pairs)
-
-plot_CL_distribution(original = data_BRCA$original, 
-                     adjusted = data_BRCA$adj, 
-                     common_pairs = data_BRCA$combat$common_pairs)
+ggplot(df_quant, aes(x = as.factor(kNN),
+                   y = cohens_d)) +
+  geom_boxplot() +
+  facet_wrap(.~type) +
+  theme_bw()
 
 
+####### IDEA!
+# what if instead of the euclidean distance, we compare the inverse of the coef of variation?
+mean_dat <- apply(matrix_data[[id_lib]], 2, function(x) mean(x))
+sd_dat <- apply(matrix_data[[id_lib]], 2, function(x) sd(x))
+plot(mean_dat, res$ComBat_res$gamma.star[id_lib,])
+plot(sd_dat, res$ComBat_res$delta.star[id_lib,])
+plot(mean_dat, sd_dat)
+plot(res$ComBat_res$gamma.star[id_lib,], res$ComBat_res$delta.star[id_lib,])
+# does not seem reasonable... try KNN instead
+
+# #######################################
+# ### NOT PROPER BATCH CORRECTION! ###
+# # batch correction and PCA only for common pairs
+# # plot PCA (opposite size, impossible to correct all)
+# common_COLO_os <- pca_commonpairs_oppositesize_function(data[1:3]) 
+# common_BRCA_os <- pca_commonpairs_oppositesize_function(data[4:6])
+# 
+# # get all corrected dataset
+# data_COLO <- adjust_alldata(list_df = data[1:3])
+# data_BRCA <- adjust_alldata(list_df = data[4:6])
+# 
+# # plot distribution
+# plot_CL_distribution(original = data_COLO$original, 
+#                      adjusted = data_COLO$adj, 
+#                      common_pairs = data_COLO$combat$common_pairs)
+# 
+# plot_CL_distribution(original = data_BRCA$original, 
+#                      adjusted = data_BRCA$adj, 
+#                      common_pairs = data_BRCA$combat$common_pairs)
+# 
+# 
+# # get correlation
+# plot_dist_commonpairs(list_df = data[1:3], oppositesize = TRUE)
+# plot_dist_commonpairs(list_df = data[4:6], oppositesize = TRUE)
+# 
+# ### does it make sense to also correct per CL?
+# ### so far not working...
+# data_COLO_percl <- adjust_alldata_percl(list_df = data[1:3], 
+#                                         mat_harm = data_COLO$adj)
+# plot_CL_distribution(original = data_COLO_percl$original, 
+#                      adjusted = data_COLO_percl$adj, 
+#                      common_pairs = data_COLO_percl$combat$common_pairs)
+# 
+# ### PROPER BATCH CORRECTION! ###
+# # batch correction
+# # plot PCA
+# common_COLO <- pca_commonpairs_function(data[1:3])
+# plot_dist_commonpairs(list_df = data[1:3], oppositesize = FALSE)
+# 
+# common_BRCA <- pca_commonpairs_function(data[4:6])
+# plot_dist_commonpairs(list_df = data[4:6], oppositesize = FALSE)
+# 
+# # correct per PCs
+# common_COLO_PCcorr <- pca_commonpairs_function(data[1:3], 
+#                                                correct_for_PCs = TRUE)
+# plot_dist_commonpairs(mat_raw_corrected = list(raw = t(common_COLO_PCcorr$raw_PCcorr), 
+#                                                corrected = t(common_COLO_PCcorr$adjusted_PCcorr)))
+# 
+# common_BRCA_PCcorr <- pca_commonpairs_function(data[4:6], 
+#                                                correct_for_PCs = TRUE)
+# plot_dist_commonpairs(mat_raw_corrected = list(raw = t(common_BRCA_PCcorr$raw_PCcorr), 
+#                                                corrected = t(common_BRCA_PCcorr$adjusted_PCcorr)))
+# 
+# # get all corrected dataset
+# data_COLO <- adjust_alldata(list_df = data[1:3])
+# data_BRCA <- adjust_alldata(list_df = data[4:6])
+# 
+# # plot distribution
+# plot_CL_distribution(original = data_COLO$original, 
+#                      adjusted = data_COLO$adj, 
+#                      common_pairs = data_COLO$combat$common_pairs)
+# 
+# plot_CL_distribution(original = data_BRCA$original, 
+#                      adjusted = data_BRCA$adj, 
+#                      common_pairs = data_BRCA$combat$common_pairs)
+# 
+# 

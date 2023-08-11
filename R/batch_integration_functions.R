@@ -707,5 +707,89 @@ plot_dist_commonpairs <- function(list_df){
   
 }
 
+########
+# can we estimate gamma and delta from the closest elements?
+# validation with the batch
+get_stat_closest <- function(id_lib, 
+                             matrix_data, 
+                             combat_param, 
+                             kNN = NULL, 
+                             quant_prob = NULL){
+  
+  # explain why euclidean distance makes sense
+  dist_guides <- as.matrix(dist(t(matrix_data[[id_lib]])))
+  if (is.null(kNN) & is.null(quant_prob)) {
+    stop("one between kNN and quant_prob should not be NULL")
+  }else{
+    # for each guide, find closest guides
+    if (!is.null(kNN)) {
+      closest_guides <- apply(dist_guides, 1, function(x) order(x)[1:(kNN + 1)], simplify = FALSE)
+      closest_guides_dist <- apply(dist_guides, 1, function(x) sort(x)[1:(kNN + 1)], simplify = FALSE)
+    }else{
+      max_dist <- quantile(as.vector(dist_guides[upper.tri(dist_guides, diag = FALSE)]), 
+                           probs = quant_prob)
+      closest_guides <- apply(dist_guides, 1, function(x) which(x < max_dist), simplify = FALSE)
+      closest_guides_dist <- apply(dist_guides, 1, function(x) x[x < max_dist], simplify = FALSE)
+    }
+  }
+  
+  gamma_closest <- lapply(closest_guides, 
+                          function(x) combat_param$gamma.star[id_lib,x])
+  gamma_compl <- lapply(closest_guides, 
+                        function(x) combat_param$gamma.star[id_lib,-x])
+  delta_closest <- lapply(closest_guides, 
+                          function(x) combat_param$delta.star[id_lib,x])
+  delta_compl <- lapply(closest_guides, 
+                        function(x) combat_param$delta.star[id_lib,-x])
+  
+  ###
+  n_pairs <- ncol(matrix_data[[id_lib]])
+  cohensd_gamma <- sapply(1:n_pairs, function(x) 
+    tryCatch(cohens_d(
+      x = abs(combat_param$gamma.star[id_lib,x] - gamma_closest[[x]]), 
+      y = abs(combat_param$gamma.star[id_lib,x] - gamma_compl[[x]]), 
+      pooled_sd = FALSE)$Cohens_d, 
+      error = function(e){NA}))
+  
+  ttest_gamma <- sapply(1:n_pairs, function(x) 
+    tryCatch(t.test(
+      x = abs(combat_param$gamma.star[id_lib,x] - gamma_closest[[x]]),
+      y = abs(combat_param$gamma.star[id_lib,x] - gamma_compl[[x]]), 
+      alternative = "less")$p.value, 
+      error = function(e){NA}))
+  
+  cohensd_delta <- sapply(1:n_pairs, function(x) 
+    tryCatch(cohens_d(
+      x = abs(combat_param$delta.star[id_lib,x] - delta_closest[[x]]), 
+      y = abs(combat_param$delta.star[id_lib,x] - delta_compl[[x]]), 
+      pooled_sd = FALSE)$Cohens_d, 
+      error = function(e){NA}))
+  
+  ttest_delta <- sapply(1:n_pairs, function(x) 
+    tryCatch(t.test(
+      x = abs(combat_param$delta.star[id_lib,x] - delta_closest[[x]]), 
+      y = abs(combat_param$delta.star[id_lib,x] - delta_compl[[x]]), 
+      alternative = "less")$p.value,
+      error = function(e){NA}))
+  
+  df_out <- data.frame(SEQ_pair = rep(colnames(matrix_data[[id_lib]]), 2), 
+                       cohens_d = c(cohensd_gamma, cohensd_delta), 
+                       ttest_pval = c(ttest_gamma, ttest_delta), 
+                       type = c(rep("gamma", n_pairs), rep("delta", n_pairs)), 
+                       id_lib = id_lib)
+  
+  if (!is.null(kNN)) {
+    df_out$kNN <- kNN
+  }
+  
+  if (!is.null(quant_prob)) {
+    df_out$quant_prob <- quant_prob
+  }
+  
+  return(df_out)
+  
+}
+
+
 
 
