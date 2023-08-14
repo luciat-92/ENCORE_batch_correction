@@ -4,6 +4,7 @@ library(sva)
 library(reshape2)
 library(ggplot2)
 library(ggrepel)
+library(pROC)
 source("R/batch_integration_functions.R")
 
 #### 
@@ -98,63 +99,12 @@ CL_summary <- pheatmap::pheatmap(tab_count,
 common_COLO <- pca_commonpairs_function(data[1:3]) 
 common_BRCA <- pca_commonpairs_function(data[4:6]) 
 
-#### TEST ####
-list_df <- data[1:3]
-res <- combat_correction(list_df)
-corrected_common <- res$corrected
-raw_common <- res$raw
-common_pairs <- rownames(raw_common)
-matrix_data <- lapply(harmonize_per_CL(data[1:3]), function(x) 
-  x[,common_pairs])
-
-# varying kNN
-kNN_list <- c(5, seq(10, 100, by = 10))
-df_kNN <- data.frame()
-for (kNN_p in kNN_list) {
-  print(kNN_p)
-  tmp <- lapply(1:length(list_df), function(x)
-    get_stat_closest(id_lib = x, 
-                     matrix_data = matrix_data, 
-                     combat_param = res$ComBat_res, 
-                     kNN = kNN_p))  
-  df_kNN <- rbind(do.call(rbind, tmp), df_kNN)
-}
-
-ggplot(df_kNN, aes(x = as.factor(kNN),
-                   y = cohens_d)) +
-  geom_boxplot() +
-  facet_wrap(.~type) +
-  theme_bw()
-
-# varying prob quantile
-quant_list <- c(0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
-df_quant <- data.frame()
-for (quant_p in quant_list) {
-  print(quant_p)
-  tmp <- lapply(1:length(list_df), function(x)
-    get_stat_closest(id_lib = x, 
-                     matrix_data = matrix_data, 
-                     combat_param = res$ComBat_res, 
-                     quant_prob = quant_p))  
-  df_quant  <- rbind(do.call(rbind, tmp), df_quant)
-}
-
-ggplot(df_quant, aes(x = as.factor(kNN),
-                   y = cohens_d)) +
-  geom_boxplot() +
-  facet_wrap(.~type) +
-  theme_bw()
+#### Test Neighbours strategy ####
+validation_COLO <- validate_NN_approximation(list_df = data[1:3])
+validation_BRCA <- validate_NN_approximation(list_df = data[4:6])
 
 
-####### IDEA!
-# what if instead of the euclidean distance, we compare the inverse of the coef of variation?
-mean_dat <- apply(matrix_data[[id_lib]], 2, function(x) mean(x))
-sd_dat <- apply(matrix_data[[id_lib]], 2, function(x) sd(x))
-plot(mean_dat, res$ComBat_res$gamma.star[id_lib,])
-plot(sd_dat, res$ComBat_res$delta.star[id_lib,])
-plot(mean_dat, sd_dat)
-plot(res$ComBat_res$gamma.star[id_lib,], res$ComBat_res$delta.star[id_lib,])
-# does not seem reasonable... try KNN instead
+
 
 # #######################################
 # ### NOT PROPER BATCH CORRECTION! ###

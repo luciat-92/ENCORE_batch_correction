@@ -709,7 +709,7 @@ plot_dist_commonpairs <- function(list_df){
 
 ########
 # can we estimate gamma and delta from the closest elements?
-# validation with the batch
+# validation based on cohen's d inside and outside kNN
 get_stat_closest <- function(id_lib, 
                              matrix_data, 
                              combat_param, 
@@ -784,9 +784,139 @@ get_stat_closest <- function(id_lib,
   
   if (!is.null(quant_prob)) {
     df_out$quant_prob <- quant_prob
+    df_out$max_dist <- max_dist
   }
   
   return(df_out)
+  
+}
+
+# can we estimate gamma and delta from the closest elements?
+# validation based on auc using ED distance between param as predictor
+compute_auc <- function(id_lib, 
+                        matrix_data, 
+                        combat_param, 
+                        kNN){
+  
+  # distance of logFCs across CLs
+  dist_guides <- as.matrix(dist(t(matrix_data[[id_lib]])))
+  closest_guides <- apply(dist_guides, 1, function(x) order(x)[1:(kNN + 1)], simplify = FALSE)
+  n_pairs <- ncol(matrix_data[[id_lib]])
+  
+  # distance of the gamma,delta parameters across guide pairs 
+  param_vector <- data.frame(gamma = combat_param$gamma.star[id_lib,], 
+                             delta = combat_param$delta.star[id_lib,])
+  dist_param <- as.matrix(dist(param_vector, method = "euclidean"))
+  
+  # response = kNN of the guide pair
+  # predictor = distance between the guide pair and all the other guide pairs
+  auc_res <- sapply(1:n_pairs, function(x)
+    as.numeric(auc(roc(
+      response = as.numeric(1:n_pairs %in% closest_guides[[x]]), 
+      predictor = unname(dist_param[,x]), 
+      quiet = TRUE, 
+      direction = ">"))))
+  
+  df_out <- data.frame(SEQ_pair = colnames(matrix_data[[id_lib]]),
+                       auc = auc_res, 
+                       id_lib = id_lib, 
+                       kNN = kNN)
+  return(df_out)
+  
+}
+
+# combine all validation strategies:
+validate_NN_approximation <- function(list_df){
+  
+  res <- combat_correction(list_df)
+  corrected_common <- res$corrected
+  raw_common <- res$raw
+  common_pairs <- rownames(raw_common)
+  matrix_data <- lapply(harmonize_per_CL(list_df), function(x) 
+    x[,common_pairs])
+  
+  # varying kNN
+  kNN_list <- c(5, seq(10, 100, by = 10))
+  df_kNN <- data.frame()
+  for (kNN_p in kNN_list) {
+    print(kNN_p)
+    tmp <- lapply(1:length(list_df), function(x)
+      get_stat_closest(id_lib = x, 
+                       matrix_data = matrix_data, 
+                       combat_param = res$ComBat_res, 
+                       kNN = kNN_p))  
+    df_kNN <- rbind(do.call(rbind, tmp), df_kNN)
+  }
+  
+  pl <- ggplot(df_kNN, aes(x = as.factor(kNN),
+                     y = cohens_d)) +
+    geom_boxplot() +
+    facet_wrap(.~type) +
+    xlab("k Nearest Neigh.") +
+    ylab("Cohen's d:\n |param_i - neigh.| VS |param_i - not neigh.|") +
+    theme_bw()
+  print(pl)
+  
+  # varying prob quantile
+  quant_list <- c(0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
+  df_quant <- data.frame()
+  for (quant_p in quant_list) {
+    print(quant_p)
+    tmp <- lapply(1:length(list_df), function(x)
+      get_stat_closest(id_lib = x, 
+                       matrix_data = matrix_data, 
+                       combat_param = res$ComBat_res, 
+                       quant_prob = quant_p))  
+    df_quant  <- rbind(do.call(rbind, tmp), df_quant)
+  }
+  
+  pl <- ggplot(df_quant, aes(x = as.factor(quant_prob),
+                       y = cohens_d)) +
+    geom_boxplot() +
+    facet_wrap(.~type) +
+    xlab("Quantile perc. of distance distribution to define maximum Eucl. Distance") +
+    ylab("Cohen's d:\n |param_i - neigh.| VS |param_i - not neigh.|") +
+    theme_bw()
+  print(pl)
+  
+  count_na <- as.data.frame(table(is.na(df_quant$cohens_d), df_quant$quant_prob)) %>%
+    mutate(Var1 = case_when(Var1 == "TRUE" ~ "no guide pairs in the range", 
+                            Var1 == "FALSE" ~ "> 0 guide pairs in the range"))
+  
+  pl <- ggplot(count_na, aes(x = as.factor(Var2),
+                       y = Freq, 
+                       fill = Var1)) +
+    geom_bar(stat = "identity") +
+    xlab("Quantile perc. of distance distribution to define maximum Eucl. Distance") +
+    ylab("N. guide pairs") + 
+    theme_bw() +
+    theme(legend.position = "bottom")
+  print(pl)
+  
+  ### Validation 2:
+  # create TPR, FPR. Compare the selection of closest kNN with the "closest" param
+  auc_kNN <- data.frame()
+  for (kNN_p in kNN_list) {
+    print(kNN_p)
+    tmp <- lapply(1:length(list_df), function(x)
+      compute_auc(id_lib = x, 
+                  matrix_data = matrix_data, 
+                  combat_param = res$ComBat_res, 
+                  kNN = kNN_p))  
+    auc_kNN <- rbind(do.call(rbind, tmp), auc_kNN)
+  }
+  
+  pl <- ggplot(auc_kNN, aes(x = as.factor(kNN),
+                      y = auc)) +
+    geom_boxplot() +
+    xlab("k Nearest Neigh.") +
+    ylab("AUROC") +
+    theme_bw()
+  print(pl)
+  
+  return(list(cohensd_kNN = df_kNN, 
+              cohensd_range = df_quant, 
+              auc_kNN = auc_kNN))
   
 }
 
