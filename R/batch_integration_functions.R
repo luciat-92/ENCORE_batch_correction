@@ -395,10 +395,60 @@ pca_commonpairs_function <- function(list_df){
 }
 
 
-# adjust data, combat estimates per guide pairs
-adjust_alldata <- function(list_df){
+# distance between each element in a matrix
+dist2 <- function(X,C) {
+  # from SNFtools
+  
+  ndata <- nrow(X)
+  ncentres <- nrow(C)
+  
+  sumsqX <- rowSums(X^2)
+  sumsqC <- rowSums(C^2)
+  
+  XC <- 2 * (X %*% t(C))
+  res <- matrix(rep(sumsqX, times = ncentres), ndata, ncentres) + 
+    t(matrix(rep(sumsqC, times = ndata), ncentres, ndata)) - XC
+  res[res < 0] <- 0
+  
+  return(res)
+}
 
-combat_res_all <- combat_correction_oppositesize(list_df = list_df)
+# approximate combat param via kNN
+param_approx_kNN <- function(
+  matrix_data, 
+  gamma_param, 
+  delta_param){
+  
+  common_pairs <- names(gamma_param)
+  unique_pairs <- setdiff(colnames(matrix_data), common_pairs)
+  
+  # distance between common pairs and unique pairs only
+  dist_logFCs <- sqrt(dist2(t(matrix_data[,common_pairs]),
+                            t(matrix_data[,unique_pairs])))
+  
+  closest_guides <- apply(dist_logFCs, 2, function(x) 
+    order(x)[1:kNN], 
+    simplify = TRUE)
+  
+  gamma_approx_unique <- apply(closest_guides, 2, function(x)
+    mean(gamma_param[common_pairs[x]])
+  )
+  
+  delta_approx_unique <- apply(closest_guides, 2, function(x)
+    mean(delta_param[common_pairs[x]])
+  )
+  
+  return(list(
+    gamma = gamma_approx_unique, 
+    delta = delta_approx_unique
+  ))
+  
+}
+
+# adjust data, combat estimates per guide pairs
+adjust_alldata_kNN <- function(list_df, kNN){
+
+combat_res_all <- combat_correction(list_df = list_df)
 combat_res_all$common_pairs <- rownames(combat_res_all$ComBat_res$correctedData)
   
 combat_res <- combat_res_all$ComBat_res
@@ -407,14 +457,18 @@ n_guide_common <- nrow(combat_res$correctedData)
 
 # get combat param
 batch.design <- combat_res$batchDesign
-gamma.star <- combat_res$gamma.star # mean
-delta.star <- combat_res$delta.star # var
+gamma.star <- combat_res$gamma.star # additive batch effect
+delta.star <- combat_res$delta.star # multiplicative batch effect
 stand.mean <- combat_res$stdmean
 var.pooled <- combat_res$varpool
 
-# find mean and var for all CLs
+# standardize each guide pair, Mean and Sd computed across CLs
 stand.mean_all <- lapply(list_logFC, function(x) rowMeans(t(x)) %*% t(rep(1, ncol(t(x)))))
 var.pooled_all <- lapply(list_logFC, function(x) rowSds(t(x)) %*% t(rep(1, ncol(t(x)))))
+# NOTE:
+# we cannot use stand.mean and var.pooled (stdPrior) because we need to estimate guide pairs not in common
+# but correlation is high for common pairs with this and ComBatCP strategy 
+# >0.95 for stand.mean and >0.84 for var.pooled
 s.data_all <- mapply(function(x,y,z) (t(x) - y)/z, 
                      x = list_logFC, 
                      y = stand.mean_all, 
@@ -433,31 +487,35 @@ var_common <- mapply(function(x, y)
   x = 1:nrow(delta.star), y = list_logFC, 
   SIMPLIFY = FALSE)
 
-# for those not in common, use the median
-mean_all <- mapply(function(x, y) 
-  matrix(median(gamma.star[x,]), 
-         nrow = ncol(y) - n_guide_common, 
-         ncol = nrow(y)), 
-  x = 1:nrow(gamma.star), y = list_logFC, SIMPLIFY = FALSE)
-
-var_all <- mapply(function(x, y) 
-  matrix(median(sqrt(delta.star[x,])), 
-         nrow = ncol(y) - n_guide_common, 
-         ncol = nrow(y)), 
-  x = 1:nrow(delta.star), y = list_logFC, SIMPLIFY = FALSE)
-
-for (i in 1:length(list_logFC)) {
-  rownames(mean_common[[i]]) <- colnames(gamma.star)
-  rownames(var_common[[i]]) <- colnames(gamma.star)
-  rownames(mean_all[[i]]) <- setdiff(colnames(list_logFC[[i]]), colnames(gamma.star))
-  rownames(var_all[[i]]) <- setdiff(colnames(list_logFC[[i]]), colnames(gamma.star))
+# for those not in common, use kNN
+mean_unique <- var_unique <- list()
+mean_all <- var_all <- list()
+for (id in 1:length(list_logFC)) {
+  
+  param_approx <- param_approx_kNN(matrix_data = list_logFC[[id]], 
+                   gamma_param = gamma.star[id,],
+                   delta_param = delta.star[id,])
+  
+  mean_unique[[id]] <- matrix(param_approx$gamma, 
+                              nrow = length(param_approx$gamma), 
+                              ncol = nrow(list_logFC[[id]]))
+  
+  var_unique[[id]] <- matrix(param_approx$delta, 
+                              nrow = length(param_approx$delta), 
+                              ncol = nrow(list_logFC[[id]]))
+  
+  rownames(mean_common[[id]]) <- colnames(gamma.star)
+  rownames(var_common[[id]]) <- colnames(delta.star)
+  rownames(mean_unique[[id]]) <- names(param_approx$gamma)
+  rownames(var_unique[[id]]) <- names(param_approx$delta)
   
   # put back together
-  var_all[[i]] <- rbind(var_common[[i]], var_all[[i]])
-  mean_all[[i]] <- rbind(mean_common[[i]], mean_all[[i]])
+  var_all[[id]] <- rbind(var_common[[id]], var_unique[[id]])
+  mean_all[[id]] <- rbind(mean_common[[id]], mean_unique[[id]])
   # order properly
-  var_all[[i]] <- var_all[[i]][rownames(s.data_all[[i]]),]
-  mean_all[[i]] <- mean_all[[i]][rownames(s.data_all[[i]]),]
+  var_all[[id]] <- var_all[[id]][rownames(s.data_all[[id]]),]
+  mean_all[[id]] <- mean_all[[id]][rownames(s.data_all[[id]]),]
+  
 }
 
 adjusted.data_all <- mapply(function(x,y,z) (x - y)/z, 
@@ -466,8 +524,6 @@ adjusted.data_all <- mapply(function(x,y,z) (x - y)/z,
                             z = var_all, 
                             SIMPLIFY = FALSE)
 
-
-
 # add original mean and variance back
 adjusted.data_all <- mapply(function(x,y,z) t( (x*z) + y ), 
                             x = adjusted.data_all, 
@@ -475,7 +531,8 @@ adjusted.data_all <- mapply(function(x,y,z) t( (x*z) + y ),
                             z = var.pooled_all, 
                             SIMPLIFY = FALSE)
 
-return(list(adj = adjusted.data_all, original = list_logFC, 
+return(list(adj = adjusted.data_all, 
+            original = list_logFC, 
             combat = combat_res_all))
 
 }
@@ -523,7 +580,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
     
     pl1 <- ggplot(df_CL[[i]], 
                   aes(x = Note1, y = logFC_adj, fill = lib)) + 
-      geom_boxplot(outlier.size = 1) + 
+      geom_boxplot(outlier.size = 0.5) + 
       theme_bw() + 
       xlab("") +
       coord_flip() + 
@@ -531,7 +588,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
     
     pl2 <- ggplot(df_CL[[i]],
                   aes(x = Note1, y = logFC_or, fill = lib)) + 
-      geom_boxplot(outlier.size = 1) + 
+      geom_boxplot(outlier.size = 0.5) + 
       theme_bw() + 
       xlab("") +
       coord_flip() + 
@@ -539,7 +596,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
     
     pl3 <- ggplot(subset(df_CL[[i]], SEQ_pair %in% common_pairs),
                   aes(x = Note1, y = logFC_adj, fill = lib)) +
-      geom_boxplot(outlier.size = 1) +
+      geom_boxplot(outlier.size = 0.5) +
       theme_bw() +
       xlab("") +
       coord_flip() +
@@ -547,13 +604,13 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
 
     pl4 <- ggplot(subset(df_CL[[i]], SEQ_pair %in% common_pairs),
                   aes(x = Note1, y = logFC_or, fill = lib)) +
-      geom_boxplot(outlier.size = 1) +
+      geom_boxplot(outlier.size = 0.5) +
       theme_bw() +
       xlab("") +
       coord_flip() +
       ggtitle(sprintf("%s: original (common pairs)", CL_name))
 
-    pl[[i]] <- ggpubr::ggarrange(plotlist = list(pl1, pl2, pl3, pl4), ncol = 2, nrow = 2, align = "hv", common.legend = TRUE)
+    pl[[i]] <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1), ncol = 2, nrow = 2, align = "hv", common.legend = TRUE)
     print(pl[[i]])
   }
   
@@ -591,58 +648,10 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
     coord_flip() + 
     ggtitle(sprintf("%s: original (common pairs)", "All CLs"))
   
-  pl <- ggpubr::ggarrange(plotlist = list(pl1, pl2, pl3, pl4), ncol = 2, nrow = 2, align = "hv", common.legend = TRUE)
+  pl <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1), ncol = 2, nrow = 2, align = "hv", common.legend = TRUE)
   print(pl)
   
 }
-
-# plot distribution for each cell line
-# plot_CL_distribution <- function(list_df, common_pairs){
-#   
-#   tmp_model <- model_encore_table[model_encore_table$lib %in% names(list_df),]
-#   CL_names <- unique(tmp_model$model_name_CMP)
-#   pl <- list()
-#   for (i in 1:length(CL_names)) {
-#     
-#     CL_name <- CL_names[i]
-#     CL_CMP <- unique(tmp_model$model_id_CMP[tmp_model$model_name_CMP == CL_name])
-#     print(sprintf("%s (%s)", CL_name, CL_CMP))
-#     
-#     df_tmp <- lapply(list_df, function(x) 
-#       x[,c(1:6,grep(CL_CMP, colnames(x)), grep("SEQ_pair", colnames(x)))])
-#     
-#     id_keep <- which(sapply(df_tmp, ncol) == 8)
-#     df_tmp <- df_tmp[id_keep] 
-#     df_tmp <- lapply(df_tmp,  function(x) 
-#       x %>% dplyr::rename_at(7, ~"logFC")) 
-#     df_CL <- bind_rows(df_tmp)
-#     print(dim(df_CL))
-#     
-#     
-#     pl1 <- ggplot(subset(df_CL, SEQ_pair %in% common_pairs), 
-#                   aes(x = Note1, y = logFC, fill = lib)) + 
-#       geom_boxplot(outlier.size = 1) + 
-#       theme_bw() + 
-#       xlab("") +
-#       coord_flip() + 
-#       ggtitle(sprintf("%s: only common pairs", CL_name))
-#     
-#     pl2 <- ggplot(df_CL,
-#                   aes(x = Note1, y = logFC, fill = lib)) + 
-#       geom_boxplot(outlier.size = 1) + 
-#       theme_bw() + 
-#       xlab("") +
-#       coord_flip() + 
-#       ggtitle(sprintf("%s: all pairs", CL_name))
-#     pl[[i]] <- ggarrange(plotlist = list(pl1, pl2), ncol = 2, common.legend = TRUE)
-#     print(pl[[i]])
-#   }
-#   
-# }
-
-
-
-
 
 # get correlation
 dist_commonpairs <- function(mat_common){

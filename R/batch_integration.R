@@ -99,12 +99,24 @@ CL_summary <- pheatmap::pheatmap(tab_count,
 common_COLO <- pca_commonpairs_function(data[1:3]) 
 common_BRCA <- pca_commonpairs_function(data[4:6]) 
 
-#### Test Neighbours strategy ####
+#### Test Neighbors strategy ####
 validation_COLO <- validate_NN_approximation(list_df = data[1:3])
 validation_BRCA <- validate_NN_approximation(list_df = data[4:6])
 
+# get all corrected dataset
+data_COLO <- adjust_alldata_kNN(list_df = data[1:3], 
+                                kNN = 5)
+data_BRCA <- adjust_alldata_kNN(list_df = data[4:6], 
+                                kNN = 5)
 
-
+# plot distribution
+plot_CL_distribution(original = data_COLO$original, 
+                      adjusted = data_COLO$adj, 
+                      common_pairs = data_COLO$combat$common_pairs)
+ 
+plot_CL_distribution(original = data_BRCA$original, 
+                      adjusted = data_BRCA$adj, 
+                      common_pairs = data_BRCA$combat$common_pairs)
 
 # #######################################
 # ### NOT PROPER BATCH CORRECTION! ###
