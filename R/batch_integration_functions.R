@@ -268,7 +268,10 @@ harmonize_per_CL <- function(list_df){
 }
 
 # perform combat correction (per guide pairs)
-combat_correction <- function(list_df){
+combat_correction <- function(list_df, 
+                              save_plot = FALSE,
+                              show_plot = TRUE, 
+                              outfold = NULL){
   
   list_df_h <- harmonize_per_CL(list_df)
   common_pairs <- base::Reduce(intersect, 
@@ -316,20 +319,38 @@ combat_correction <- function(list_df){
     geom_boxplot(fill = "white", outlier.size = 1, width = 0.2) + 
     theme_bw() + 
     facet_wrap(.~param, scales = "free_y") +
+    theme(legend.position = "bottom") +
     xlab("") +
     ylab("ComBat param estimates")
   
   pl_class <- ggplot(df_ComBat_param, 
                aes(x = Note1, y = value, fill = lib)) + 
-    geom_boxplot(outlier.size = 1) + 
+    geom_boxplot(outlier.size = 0.5) + 
     theme_bw() + 
     facet_wrap(.~param, scales = "free_x") +
     xlab("") + 
     ylab("ComBat param estimates") +
+    theme(legend.position = "bottom") +
     coord_flip()
   
-  print(pl_lib)
-  print(pl_class)
+  if (show_plot) {
+    print(pl_lib)
+    print(pl_class)
+  }
+  
+  if (save_plot) {
+    ggsave(filename = sprintf("%sComBat_param_dist_libraries.png", outfold), 
+           units = "in", 
+           plot = pl_lib, 
+           width = 4, 
+           height = 4)
+    
+    ggsave(filename = sprintf("%sComBat_param_dist_GPclass.png", outfold), 
+           units = "in", 
+           plot = pl_class, 
+           width = 6, 
+           height = 5)
+  }
   
   return(list(raw = tot_mat,
               corrected = corrected,
@@ -338,9 +359,14 @@ combat_correction <- function(list_df){
 
 # PC plot for common pairs
 # plot before and after combat correction
-pca_commonpairs_function <- function(list_df){
+pca_commonpairs_function <- function(list_df, 
+                                     save_plot = FALSE, 
+                                     show_plot = TRUE, 
+                                     outfold = NULL){
   
-  res <- combat_correction(list_df)
+  res <- combat_correction(list_df, 
+                           show_plot = FALSE)
+  
   corrected_common <- res$corrected
   raw_common <- res$raw
   common_pairs <- rownames(raw_common)
@@ -351,17 +377,20 @@ pca_commonpairs_function <- function(list_df){
                         CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
                         lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
   pc_corr$lib <- factor(pc_corr$lib)
+  pc_corr$CL_label <- ""
+  pc_corr$CL_label[grepl("1", pc_corr$lib)] <- pc_corr$CL[grepl("1", pc_corr$lib)] 
   pc_corr$CL <- factor(pc_corr$CL)
   
   pl1 <- ggplot(pc_corr, aes(x = PC1,
                              y = PC2,
                              col = CL,
-                             label = CL,
+                             label = CL_label,
                              group = CL)) +
     geom_point(size = 2, aes(shape = lib)) +
-    geom_line(alpha = 0.5) + 
-    geom_text_repel(size = 2) +
-    guides(color = "none") +
+    geom_polygon(aes(fill = CL), alpha = 0.2, linewidth = 0.1) +
+    # geom_line(alpha = 0.5) + 
+    geom_text_repel(size = 3, max.overlaps = Inf) +
+    guides(color = "none", fill = "none") +
     theme_bw() +
     ggtitle("ComBat corrected",
             subtitle = paste0("N. common guide pairs: ", length(common_pairs)))
@@ -372,21 +401,37 @@ pca_commonpairs_function <- function(list_df){
                        CL = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,1],
                        lib = str_split_fixed(rownames(pca_common$x), pattern = "_", n = 2)[,2])
   pc_raw$lib <- factor(pc_raw$lib)
+  pc_raw$CL_label <- ""
+  pc_raw$CL_label[grepl("1", pc_raw$lib)] <- pc_raw$CL[grepl("1", pc_raw$lib)] 
   pc_raw$CL <- factor(pc_raw$CL)
+  
   pl2 <- ggplot(pc_raw, aes(x = PC1,
-                            y = PC2,
-                            col = CL,
-                            label = CL,
-                            group = CL)) +
+                             y = PC2,
+                             col = CL,
+                             label = CL_label,
+                             group = CL)) +
     geom_point(size = 2, aes(shape = lib)) +
-    geom_line(alpha = 0.5) + 
-    geom_text_repel(size = 2) +
+    geom_polygon(aes(fill = CL), alpha = 0.2, linewidth = 0.1) +
+    # geom_line(alpha = 0.5) + 
+    geom_text_repel(size = 3, max.overlaps = Inf) +
+    guides(color = "none", fill = "none") +
     theme_bw() +
-    guides(color = "none") +
     ggtitle("Raw logFC",
             subtitle = paste0("N. common guide pairs: ", length(common_pairs)))
+  
   pl <- ggpubr::ggarrange(plotlist = list(pl2, pl1), ncol = 2, common.legend = TRUE)
-  print(pl)
+  
+  if (show_plot) {
+    print(pl)
+  }
+  
+  if (save_plot) {
+    ggsave(filename = sprintf("%sPC1_2_raw_and_corrected.png", outfold), 
+           units = "in", 
+           plot = pl, 
+           width = 8, 
+           height = 5.5)
+  }
   
   return(list(common_pairs = common_pairs,
               pc_corr = pc_corr,
@@ -415,40 +460,121 @@ dist2 <- function(X,C) {
 
 # approximate combat param via kNN
 param_approx_kNN <- function(
-  matrix_data, 
-  gamma_param, 
-  delta_param){
+  matrix_data_list, 
+  gamma_matrix, 
+  delta_matrix, 
+  kNN, 
+  outfold = NULL, 
+  save_plot = FALSE, 
+  show_plot = TRUE, 
+  list_df = NULL){
   
-  common_pairs <- names(gamma_param)
-  unique_pairs <- setdiff(colnames(matrix_data), common_pairs)
+  res <- list()
+  for (id in 1:length(matrix_data_list)) {
+    
+    matrix_data <- matrix_data_list[[id]]
+    gamma_param <- gamma_matrix[id,]
+    delta_param <- delta_matrix[id,]
+    
+    common_pairs <- names(gamma_param)
+    unique_pairs <- setdiff(colnames(matrix_data), common_pairs)
   
-  # distance between common pairs and unique pairs only
-  dist_logFCs <- sqrt(dist2(t(matrix_data[,common_pairs]),
-                            t(matrix_data[,unique_pairs])))
+    # distance between common pairs and unique pairs only
+    dist_logFCs <- sqrt(dist2(t(matrix_data[,common_pairs]),
+                              t(matrix_data[,unique_pairs])))
   
-  closest_guides <- apply(dist_logFCs, 2, function(x) 
-    order(x)[1:kNN], 
-    simplify = TRUE)
+    closest_guides <- apply(dist_logFCs, 2, function(x) 
+      order(x)[1:kNN], 
+      simplify = TRUE)
   
-  gamma_approx_unique <- apply(closest_guides, 2, function(x)
-    mean(gamma_param[common_pairs[x]])
-  )
+    gamma_approx_unique <- apply(closest_guides, 2, function(x)
+      mean(gamma_param[common_pairs[x]])
+    )
   
-  delta_approx_unique <- apply(closest_guides, 2, function(x)
-    mean(delta_param[common_pairs[x]])
-  )
+    delta_approx_unique <- apply(closest_guides, 2, function(x)
+      mean(delta_param[common_pairs[x]])
+    )
+    res[[id]] <- list(gamma = gamma_approx_unique, 
+                      delta = delta_approx_unique)
+  }
   
-  return(list(
-    gamma = gamma_approx_unique, 
-    delta = delta_approx_unique
-  ))
+  
+  if (show_plot) {
+    
+    param_approx <- res
+    libs <- names(matrix_data_list)
+    
+    df_annot <- mapply(function(x, y) 
+      y[match(names(x$delta), y$SEQ_pair), !grepl("LFC_RAW", colnames(y))], 
+      x = param_approx, y = list_df, SIMPLIFY = FALSE)
+    df_annot <- do.call(rbind, df_annot)
+    
+    gamma_tmp <- lapply(param_approx, function(x) x$gamma)
+    df_pl_gamma <- data.frame(value = unlist(gamma_tmp), 
+                              param = "gamma", 
+                              df_annot)
+    
+    delta_tmp <- lapply(param_approx, function(x) x$delta)
+    df_pl_delta <- data.frame(value = unlist(delta_tmp), 
+                              param = "delta", 
+                              df_annot)
+    df_pl <- rbind(df_pl_delta, df_pl_gamma)
+    
+    # plot dist of parameters
+    pl_lib <- ggplot(df_pl, 
+                     aes(x = lib, y = value, fill = lib)) + 
+      geom_violin() + 
+      geom_boxplot(fill = "white", outlier.size = 1, width = 0.2) + 
+      theme_bw() + 
+      facet_wrap(.~param, scales = "free_y") +
+      theme(legend.position = "bottom") +
+      xlab("") +
+      ylab("Param KNN approximation")
+    
+    pl_class <- ggplot(df_pl, 
+                       aes(x = Note1, y = value, fill = lib)) + 
+      geom_boxplot(outlier.size = 0.5) + 
+      theme_bw() + 
+      facet_wrap(.~param, scales = "free_x") +
+      xlab("") + 
+      ylab("Param KNN approximation") +
+      theme(legend.position = "bottom") +
+      coord_flip()
+    
+    print(pl_lib)
+    print(pl_class)
+    
+    if (save_plot) {
+      ggsave(filename = sprintf("%skNNApprox_param_dist_libraries.png", outfold), 
+             units = "in", 
+             plot = pl_lib, 
+             width = 4, 
+             height = 4)
+      
+      ggsave(filename = sprintf("%skNNApprox_param_dist_GPclass.png", outfold), 
+             units = "in", 
+             plot = pl_class, 
+             width = 6, 
+             height = 5)
+    }
+  }
+  
+  return(res)
   
 }
 
 # adjust data, combat estimates per guide pairs
-adjust_alldata_kNN <- function(list_df, kNN){
+adjust_alldata_kNN <- function(list_df, 
+                               kNN, 
+                               outfold = NULL, 
+                               save_plot = FALSE, 
+                               show_plot = TRUE){
 
-combat_res_all <- combat_correction(list_df = list_df)
+combat_res_all <- combat_correction(list_df = list_df, 
+                                    outfold = outfold, 
+                                    save_plot = save_plot, 
+                                    show_plot = show_plot)
+
 combat_res_all$common_pairs <- rownames(combat_res_all$ComBat_res$correctedData)
   
 combat_res <- combat_res_all$ComBat_res
@@ -488,26 +614,32 @@ var_common <- mapply(function(x, y)
   SIMPLIFY = FALSE)
 
 # for those not in common, use kNN
+param_approx <- param_approx_kNN(matrix_data_list = list_logFC, 
+                                 gamma_matrix = gamma.star,
+                                 delta_matrix = delta.star, 
+                                 kNN = kNN,
+                                 outfold = outfold, 
+                                 save_plot = save_plot, 
+                                 show_plot = show_plot, 
+                                 list_df = list_df)
+
 mean_unique <- var_unique <- list()
 mean_all <- var_all <- list()
+
 for (id in 1:length(list_logFC)) {
   
-  param_approx <- param_approx_kNN(matrix_data = list_logFC[[id]], 
-                   gamma_param = gamma.star[id,],
-                   delta_param = delta.star[id,])
-  
-  mean_unique[[id]] <- matrix(param_approx$gamma, 
-                              nrow = length(param_approx$gamma), 
+  mean_unique[[id]] <- matrix(param_approx[[id]]$gamma, 
+                              nrow = length(param_approx[[id]]$gamma), 
                               ncol = nrow(list_logFC[[id]]))
   
-  var_unique[[id]] <- matrix(param_approx$delta, 
-                              nrow = length(param_approx$delta), 
+  var_unique[[id]] <- matrix(param_approx[[id]]$delta, 
+                              nrow = length(param_approx[[id]]$delta), 
                               ncol = nrow(list_logFC[[id]]))
   
   rownames(mean_common[[id]]) <- colnames(gamma.star)
   rownames(var_common[[id]]) <- colnames(delta.star)
-  rownames(mean_unique[[id]]) <- names(param_approx$gamma)
-  rownames(var_unique[[id]]) <- names(param_approx$delta)
+  rownames(mean_unique[[id]]) <- names(param_approx[[id]]$gamma)
+  rownames(var_unique[[id]]) <- names(param_approx[[id]]$delta)
   
   # put back together
   var_all[[id]] <- rbind(var_common[[id]], var_unique[[id]])
@@ -517,6 +649,7 @@ for (id in 1:length(list_logFC)) {
   mean_all[[id]] <- mean_all[[id]][rownames(s.data_all[[id]]),]
   
 }
+
 
 adjusted.data_all <- mapply(function(x,y,z) (x - y)/z, 
                             x = s.data_all, 
@@ -533,13 +666,20 @@ adjusted.data_all <- mapply(function(x,y,z) t( (x*z) + y ),
 
 return(list(adj = adjusted.data_all, 
             original = list_logFC, 
-            combat = combat_res_all))
+            combat = combat_res_all, 
+            param_notmatching = param_approx))
 
 }
 
 
 # plot distributions per CL
-plot_CL_distribution <- function(original, adjusted, common_pairs){
+plot_CL_distribution <- function(original, 
+                                 adjusted, 
+                                 common_pairs, 
+                                 outfold = NULL, 
+                                 show_plot = TRUE,
+                                 save_plot = FALSE
+                                 ){
   
   CL_names <- rownames(original[[1]])
   # get annotation
@@ -584,6 +724,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
       theme_bw() + 
       xlab("") +
       coord_flip() + 
+      theme(axis.text.y = element_blank()) + 
       ggtitle(sprintf("%s: adjusted", CL_name))
     
     pl2 <- ggplot(df_CL[[i]],
@@ -600,6 +741,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
       theme_bw() +
       xlab("") +
       coord_flip() +
+      theme(axis.text.y = element_blank()) + 
       ggtitle(sprintf("%s: adjusted (common pairs)", CL_name))
 
     pl4 <- ggplot(subset(df_CL[[i]], SEQ_pair %in% common_pairs),
@@ -610,8 +752,16 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
       coord_flip() +
       ggtitle(sprintf("%s: original (common pairs)", CL_name))
 
-    pl[[i]] <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1), ncol = 2, nrow = 2, align = "hv", common.legend = TRUE)
-    print(pl[[i]])
+    pl[[i]] <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1), 
+                                 heights = c(0.8,1),
+                                 widths = c(1, 0.6),
+                                 ncol = 2, 
+                                 nrow = 2, 
+                                 common.legend = TRUE)
+    if (show_plot) {
+      print(pl[[i]])
+    }
+    
   }
   
   # plot dist across all CLs
@@ -622,6 +772,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
     theme_bw() + 
     xlab("") +
     coord_flip() + 
+    theme(axis.text.y = element_blank()) + 
     ggtitle(sprintf("%s: adjusted", "All CLs"))
   
   pl2 <- ggplot(df_tot,
@@ -630,6 +781,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
     theme_bw() + 
     xlab("") +
     coord_flip() + 
+    theme(axis.text.y = element_text(size = 10)) + 
     ggtitle(sprintf("%s: original", "All CLs"))
   
   pl3 <- ggplot(subset(df_tot, SEQ_pair %in% common_pairs), 
@@ -638,6 +790,7 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
     theme_bw() + 
     xlab("") +
     coord_flip() + 
+    theme(axis.text.y = element_blank()) + 
     ggtitle(sprintf("%s: adjusted (common pairs)", "All CLs"))
   
   pl4 <- ggplot(subset(df_tot, SEQ_pair %in% common_pairs),
@@ -646,10 +799,73 @@ plot_CL_distribution <- function(original, adjusted, common_pairs){
     theme_bw() + 
     xlab("") +
     coord_flip() + 
+    theme(axis.text.y = element_text(size = 10)) + 
     ggtitle(sprintf("%s: original (common pairs)", "All CLs"))
   
-  pl <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1), ncol = 2, nrow = 2, align = "hv", common.legend = TRUE)
-  print(pl)
+  pl_class <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1), 
+                               heights = c(0.8,1),
+                               widths = c(1, 0.7),
+                               ncol = 2, 
+                               nrow = 2, 
+                               align = "h", 
+                               common.legend = TRUE)
+  
+  if (save_plot) {
+    ggsave(filename = sprintf("%sALLCLs_distr_perClass.png", outfold), 
+           units = "in", 
+           plot = pl_class, 
+           width = 4, 
+           height = 7)
+  }
+  
+  pl1 <- ggplot(df_tot, 
+                aes(x = lib, y = logFC_adj, fill = lib)) + 
+    geom_boxplot(outlier.size = 1) + 
+    theme_bw() + 
+    xlab("") +
+    ggtitle(sprintf("%s: adjusted", "All CLs"))
+  
+  pl2 <- ggplot(df_tot,
+                aes(x = lib, y = logFC_or, fill = lib)) + 
+    geom_boxplot(outlier.size = 1) + 
+    theme_bw() + 
+    xlab("") +
+    ggtitle(sprintf("%s: original", "All CLs"))
+  
+  pl3 <- ggplot(subset(df_tot, SEQ_pair %in% common_pairs), 
+                aes(x = lib, y = logFC_adj, fill = lib)) + 
+    geom_boxplot(outlier.size = 1) + 
+    theme_bw() + 
+    xlab("") +
+    ggtitle(sprintf("%s: adjusted (common pairs)", "All CLs"))
+  
+  pl4 <- ggplot(subset(df_tot, SEQ_pair %in% common_pairs),
+                aes(x = lib, y = logFC_or, fill = lib)) + 
+    geom_boxplot(outlier.size = 1) + 
+    theme_bw() + 
+    xlab("") +
+    ggtitle(sprintf("%s: original (common pairs)", "All CLs"))
+  
+  pl_lib <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1),
+                          ncol = 2, 
+                          nrow = 2, 
+                          align = "h", 
+                          common.legend = TRUE)
+  
+  
+  if (show_plot) {
+    print(pl_lib)
+  }
+  
+  if (save_plot) {
+    ggsave(filename = sprintf("%sALLCLs_distr_perLib.png", outfold), 
+           units = "in", 
+           plot = pl_lib, 
+           width = 7, 
+           height = 7)
+  }
+  
+  return(df_tot)
   
 }
 
@@ -673,18 +889,22 @@ dist_commonpairs <- function(mat_common){
               CLs = data.frame(name = names(inner_CLs), inner = inner_CLs, outer = outer_CLs)))
 }
 
-plot_dist_commonpairs <- function(list_df){
+plot_dist_commonpairs <- function(list_df,  
+                                  outfold){
   
-  res_combat <- combat_correction(list_df)
+  res_combat <- combat_correction(list_df, 
+                                  save_plot = FALSE,
+                                  show_plot = FALSE, 
+                                  outfold = NULL)
   
   dist_raw <- dist_commonpairs(res_combat$raw)
   dist_combat <- dist_commonpairs(res_combat$corrected)
   
   CL_dist <- data.frame(name = rep(dist_raw$CLs$name, 2), dist = c(dist_raw$CLs$inner, dist_raw$CLs$outer), 
-                        type_dist = c(rep("inner", nrow(dist_raw$CLs)), rep("outer", nrow(dist_raw$CLs))), 
+                        type_dist = c(rep("inside", nrow(dist_raw$CLs)), rep("outside", nrow(dist_raw$CLs))), 
                         type_combat = "Raw")
   CL_dist <- rbind(CL_dist, data.frame(name = rep(dist_combat$CLs$name, 2), dist = c(dist_combat$CLs$inner, dist_combat$CLs$outer), 
-                                       type_dist = c(rep("inner", nrow(dist_combat$CLs)), rep("outer", nrow(dist_combat$CLs))), 
+                                       type_dist = c(rep("inside", nrow(dist_combat$CLs)), rep("outside", nrow(dist_combat$CLs))), 
                                        type_combat = "ComBat corrected"))
   pl1 <- ggplot(CL_dist , aes(x = type_combat,
                               y = dist,
@@ -692,14 +912,15 @@ plot_dist_commonpairs <- function(list_df){
     geom_boxplot(alpha = 0.4) +
     geom_jitter(position = position_dodge(width = 0.7)) +
     xlab("") + 
+    ylab("Median Eucl. distance") + 
     theme_bw() + 
-    ggtitle("Distance among and outside same CLs")
+    ggtitle("in and out same CLs")
   
   libs_dist <- data.frame(name = rep(dist_raw$libs$name, 2), dist = c(dist_raw$libs$inner, dist_raw$libs$outer), 
-                          type_dist = c(rep("inner", nrow(dist_raw$libs)), rep("outer", nrow(dist_raw$libs))), 
+                          type_dist = c(rep("inside", nrow(dist_raw$libs)), rep("outside", nrow(dist_raw$libs))), 
                           type_combat = "Raw")
   libs_dist <- rbind(libs_dist, data.frame(name = rep(dist_combat$libs$name, 2), dist = c(dist_combat$libs$inner, dist_combat$libs$outer), 
-                                           type_dist = c(rep("inner", nrow(dist_combat$libs)), rep("outer", nrow(dist_combat$libs))), 
+                                           type_dist = c(rep("inside", nrow(dist_combat$libs)), rep("outside", nrow(dist_combat$libs))), 
                                            type_combat = "ComBat corrected"))
   pl2 <- ggplot(libs_dist , aes(x = type_combat,
                                 y = dist,
@@ -707,16 +928,23 @@ plot_dist_commonpairs <- function(list_df){
     geom_boxplot(alpha = 0.4) +
     geom_jitter(position = position_dodge(width = 0.7)) +
     xlab("") + 
+    ylab("Median Eucl. distance") + 
     theme_bw() + 
-    ggtitle("Distance among and outside same library")
+    ggtitle("in and out same library")
   pl <- ggpubr::ggarrange(plotlist = list(pl2, pl1), ncol = 2, common.legend = TRUE)
   print(pl)
   
-  return(list(CL = CL_dist, lib = libs_dist))
+  ggsave(filename = sprintf("%sinside_and_outside_distance_same_CL-lib.png", outfold), 
+         units = "in", 
+         plot = pl, 
+         width = 7, 
+         height = 4)
+  
+  return(list(CL = CL_dist, 
+              lib = libs_dist))
   
 }
 
-########
 # can we estimate gamma and delta from the closest elements?
 # validation based on cohen's d inside and outside kNN
 get_stat_closest <- function(id_lib, 
@@ -835,9 +1063,14 @@ compute_auc <- function(id_lib,
 }
 
 # combine all validation strategies:
-validate_NN_approximation <- function(list_df){
+validate_NN_approximation <- function(list_df, 
+                                      outfold){
   
-  res <- combat_correction(list_df)
+  res <- combat_correction(list_df, 
+                           save_plot = TRUE, 
+                           show_plot = TRUE, 
+                           outfold = outfold)
+  
   corrected_common <- res$corrected
   raw_common <- res$raw
   common_pairs <- rownames(raw_common)
@@ -865,6 +1098,10 @@ validate_NN_approximation <- function(list_df){
     ylab("Cohen's d:\n |param_i - neigh.| VS |param_i - not neigh.|") +
     theme_bw()
   print(pl)
+  ggsave(plot = pl, 
+         filename = sprintf("%svalidation_kNN_cohensd.png", outfold), 
+         width = 6, 
+         height = 4)
   
   # varying prob quantile
   quant_list <- c(0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
@@ -887,6 +1124,10 @@ validate_NN_approximation <- function(list_df){
     ylab("Cohen's d:\n |param_i - neigh.| VS |param_i - not neigh.|") +
     theme_bw()
   print(pl)
+  ggsave(plot = pl, 
+         filename = sprintf("%svalidation_radius_cohensd.png", outfold), 
+         width = 6, 
+         height = 4)
   
   count_na <- as.data.frame(table(is.na(df_quant$cohens_d), df_quant$quant_prob)) %>%
     mutate(Var1 = case_when(Var1 == "TRUE" ~ "no guide pairs in the range", 
@@ -901,6 +1142,12 @@ validate_NN_approximation <- function(list_df){
     theme_bw() +
     theme(legend.position = "bottom")
   print(pl)
+  
+  ggsave(plot = pl, 
+         filename = sprintf("%scountNA_radius.png", outfold), 
+         width = 4, 
+         height = 4)
+  
   
   ### Validation 2:
   # create TPR, FPR. Compare the selection of closest kNN with the "closest" param
@@ -922,6 +1169,11 @@ validate_NN_approximation <- function(list_df){
     ylab("AUROC") +
     theme_bw()
   print(pl)
+  
+  ggsave(plot = pl, 
+         filename = sprintf("%svalidation_kNN_AUC.png", outfold), 
+         width = 6, 
+         height = 4)
   
   return(list(cohensd_kNN = df_kNN, 
               cohensd_range = df_quant, 

@@ -96,92 +96,55 @@ CL_summary <- pheatmap::pheatmap(tab_count,
                                  treeheight_row = 0)
 
 # plot PCA:
-common_COLO <- pca_commonpairs_function(data[1:3]) 
-common_BRCA <- pca_commonpairs_function(data[4:6]) 
+common_COLO <- pca_commonpairs_function(data[1:3], 
+                                        outfold = sprintf("%sCOLO_", fold_output), 
+                                        save_plot = TRUE, 
+                                        show_plot = TRUE) 
+
+common_BRCA <- pca_commonpairs_function(data[4:6], 
+                                        outfold = sprintf("%sBRCA_", fold_output), 
+                                        save_plot = TRUE, 
+                                        show_plot = TRUE) 
+
+plot_dist_commonpairs(list_df = data[1:3], 
+                      outfold = sprintf("%sCOLO_", fold_output))
+
+plot_dist_commonpairs(list_df = data[4:6], 
+                      outfold = sprintf("%sBRCA_", fold_output))
 
 #### Test Neighbors strategy ####
-validation_COLO <- validate_NN_approximation(list_df = data[1:3])
-validation_BRCA <- validate_NN_approximation(list_df = data[4:6])
+# save plots
+validation_COLO <- validate_NN_approximation(list_df = data[1:3], 
+                                             outfold = sprintf("%sCOLO_", fold_output))
+
+validation_BRCA <- validate_NN_approximation(list_df = data[4:6], 
+                                             outfold = sprintf("%sBRCA_", fold_output))
 
 # get all corrected dataset
 data_COLO <- adjust_alldata_kNN(list_df = data[1:3], 
-                                kNN = 5)
+                                kNN = 5,
+                                outfold = sprintf("%sCOLO_", fold_output), 
+                                save_plot = TRUE, 
+                                show_plot = TRUE) 
+
 data_BRCA <- adjust_alldata_kNN(list_df = data[4:6], 
-                                kNN = 5)
+                                kNN = 5, 
+                                outfold = sprintf("%sBRCA_", fold_output), 
+                                save_plot = TRUE, 
+                                show_plot = TRUE) 
 
 # plot distribution
-plot_CL_distribution(original = data_COLO$original, 
-                      adjusted = data_COLO$adj, 
-                      common_pairs = data_COLO$combat$common_pairs)
+COLO_allCLs <- plot_CL_distribution(original = data_COLO$original, 
+                     adjusted = data_COLO$adj, 
+                     common_pairs = data_COLO$combat$common_pairs, 
+                     outfold = sprintf("%sCOLO_", fold_output), 
+                     save_plot = TRUE, 
+                     show_plot = TRUE) 
  
-plot_CL_distribution(original = data_BRCA$original, 
-                      adjusted = data_BRCA$adj, 
-                      common_pairs = data_BRCA$combat$common_pairs)
+BRCA_allCLs <- plot_CL_distribution(original = data_BRCA$original, 
+                     adjusted = data_BRCA$adj, 
+                     common_pairs = data_BRCA$combat$common_pairs, 
+                     outfold = sprintf("%sBRCA_", fold_output), 
+                     save_plot = TRUE, 
+                     show_plot = TRUE) 
 
-# #######################################
-# ### NOT PROPER BATCH CORRECTION! ###
-# # batch correction and PCA only for common pairs
-# # plot PCA (opposite size, impossible to correct all)
-# common_COLO_os <- pca_commonpairs_oppositesize_function(data[1:3]) 
-# common_BRCA_os <- pca_commonpairs_oppositesize_function(data[4:6])
-# 
-# # get all corrected dataset
-# data_COLO <- adjust_alldata(list_df = data[1:3])
-# data_BRCA <- adjust_alldata(list_df = data[4:6])
-# 
-# # plot distribution
-# plot_CL_distribution(original = data_COLO$original, 
-#                      adjusted = data_COLO$adj, 
-#                      common_pairs = data_COLO$combat$common_pairs)
-# 
-# plot_CL_distribution(original = data_BRCA$original, 
-#                      adjusted = data_BRCA$adj, 
-#                      common_pairs = data_BRCA$combat$common_pairs)
-# 
-# 
-# # get correlation
-# plot_dist_commonpairs(list_df = data[1:3], oppositesize = TRUE)
-# plot_dist_commonpairs(list_df = data[4:6], oppositesize = TRUE)
-# 
-# ### does it make sense to also correct per CL?
-# ### so far not working...
-# data_COLO_percl <- adjust_alldata_percl(list_df = data[1:3], 
-#                                         mat_harm = data_COLO$adj)
-# plot_CL_distribution(original = data_COLO_percl$original, 
-#                      adjusted = data_COLO_percl$adj, 
-#                      common_pairs = data_COLO_percl$combat$common_pairs)
-# 
-# ### PROPER BATCH CORRECTION! ###
-# # batch correction
-# # plot PCA
-# common_COLO <- pca_commonpairs_function(data[1:3])
-# plot_dist_commonpairs(list_df = data[1:3], oppositesize = FALSE)
-# 
-# common_BRCA <- pca_commonpairs_function(data[4:6])
-# plot_dist_commonpairs(list_df = data[4:6], oppositesize = FALSE)
-# 
-# # correct per PCs
-# common_COLO_PCcorr <- pca_commonpairs_function(data[1:3], 
-#                                                correct_for_PCs = TRUE)
-# plot_dist_commonpairs(mat_raw_corrected = list(raw = t(common_COLO_PCcorr$raw_PCcorr), 
-#                                                corrected = t(common_COLO_PCcorr$adjusted_PCcorr)))
-# 
-# common_BRCA_PCcorr <- pca_commonpairs_function(data[4:6], 
-#                                                correct_for_PCs = TRUE)
-# plot_dist_commonpairs(mat_raw_corrected = list(raw = t(common_BRCA_PCcorr$raw_PCcorr), 
-#                                                corrected = t(common_BRCA_PCcorr$adjusted_PCcorr)))
-# 
-# # get all corrected dataset
-# data_COLO <- adjust_alldata(list_df = data[1:3])
-# data_BRCA <- adjust_alldata(list_df = data[4:6])
-# 
-# # plot distribution
-# plot_CL_distribution(original = data_COLO$original, 
-#                      adjusted = data_COLO$adj, 
-#                      common_pairs = data_COLO$combat$common_pairs)
-# 
-# plot_CL_distribution(original = data_BRCA$original, 
-#                      adjusted = data_BRCA$adj, 
-#                      common_pairs = data_BRCA$combat$common_pairs)
-# 
-# 
