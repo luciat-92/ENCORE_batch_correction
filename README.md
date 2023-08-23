@@ -11,6 +11,7 @@ Use ComBat strategy for guide pairs in common and approximate the parameters for
 - Libraries annotation
 
 ### Output:
-- Plots for validation of the strategy and parameter selection
-- Table of batch corrected logFCs guide pairs x CLs
 - Sanity check plots
+- Plots for validation of kNN strategy and parameter selection
+- Data Frame of logFCs guide pairs x CLs plus guide pairs info
+
