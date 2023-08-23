@@ -1182,5 +1182,181 @@ validate_NN_approximation <- function(list_df,
 }
 
 
+# create final tables and save
+get_complete_table <- function(list_df, list_matrix){
+  
+  complete_table <- list()
+  df_annot <- mapply(function(x, y) 
+    x[match(colnames(y), x$SEQ_pair), !grepl("LFC_RAW", colnames(x))], 
+    x = list_df[names(list_matrix)], y = list_matrix, SIMPLIFY = FALSE)
+  
+  for (i in 1:length(list_matrix)) {
+    complete_table[[i]] <- cbind(df_annot[[i]], as.data.frame(t(list_matrix[[i]]))) 
+    Gene_split <- str_split_fixed(complete_table[[i]]$Gene, pattern = "~", n = 2)
+    complete_table[[i]] <- complete_table[[i]] %>%
+      dplyr::mutate(Gene1 = Gene_split[,1], .after = "Gene") %>%
+      dplyr::mutate(Gene2 = Gene_split[,2], .after = "Gene1") %>%
+      dplyr::rename(Gene_pair = "Gene")
+  }
+  complete_table <- do.call(rbind, complete_table)
+  return(complete_table)
+  
+}
+
+test_distributions_per_class <- function(data_adj, 
+                                         data_or, 
+                                         outfold = NULL, 
+                                         save_plot = FALSE, 
+                                         show_plot = TRUE){
+  
+  CL_names <- colnames(data_adj)[-(1:13)]
+  # remove AnchorCombinations
+  data_adj <- data_adj %>%
+    dplyr::filter(!Note1 %in% "AnchorCombinations")
+  
+  data_or <- data_or %>%
+    dplyr::filter(!Note1 %in% "AnchorCombinations")
+  
+  class_names <- unique(data_adj$Note1)
+  ktest_adj <- ktest_or <- list()
+  for (i in 1:length(CL_names)) {
+    CL <- CL_names[i]
+    ktest_adj[[i]] <- sapply(class_names, function(x) kruskal.test(x = data_adj[data_adj$Note1 %in% x, CL], g = data_adj[data_adj$Note1 %in% x, "lib"])$p.value)
+    ktest_adj[[i]] <- data.frame(pvalue = unname(ktest_adj[[i]]), class = names(ktest_adj[[i]]), CL = CL)
+    ktest_or[[i]] <- sapply(class_names, function(x) kruskal.test(x = data_or[data_or$Note1 %in% x, CL], g = data_or[data_or$Note1 %in% x, "lib"])$p.value)
+    ktest_or[[i]] <- data.frame(pvalue = unname(ktest_or[[i]]), class = names(ktest_or[[i]]), CL = CL)
+  }
+  ktest_adj <- do.call(rbind, ktest_adj)
+  ktest_or <- do.call(rbind, ktest_or)
+  ktest_all <- full_join( ktest_adj, ktest_or, 
+                          by = c("CL", "class"), 
+                          suffix = c("_adjusted", "_original")) %>%
+    dplyr::mutate(log10_pvalue_adjusted = -log10(pvalue_adjusted + .Machine$double.xmin), 
+                  log10_pvalue_original = -log10(pvalue_original + .Machine$double.xmin))
+  
+  pl <- ggplot(ktest_all, aes(x = log10_pvalue_adjusted,
+                              y = log10_pvalue_original,
+                              col = CL,
+                              label = CL)) +
+    facet_wrap(.~class, ncol = 2) +
+    geom_point(size = 2) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = -log10(0.05), linetype = "dashed", col = "red") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", col = "red") +
+    # geom_text_repel(size = 3, max.overlaps = Inf) +
+    theme_bw() + 
+    theme(legend.position = "right", legend.title = element_blank()) + 
+    xlab("After Adjustment") + 
+    ylab("Original") + 
+    ggtitle("-log10 P-value from Kruskal-Wallis test")
+  
+  if (show_plot) {
+    print(pl)
+  }
+  
+  if (save_plot) {
+    ggsave(filename = sprintf("%skruskaltest_perclass_perCL.png", outfold), 
+           units = "in", 
+           plot = pl, 
+           width = 6, 
+           height = 8)
+  }
+  
+  return(ktest_all)
+  
+}
+
+plot_library_genes <- function(data_adj, 
+                               data_or, 
+                               essential_genes, 
+                               outfold = NULL, 
+                               show_plot = TRUE,
+                               save_plot = FALSE){
+  
+  data_annot_lib <- data_adj %>%
+    dplyr::filter(Note1 %in% c("LibrarySingletons", "LibraryCombinations")) %>%
+    dplyr::mutate(Gene1_essential = Gene1 %in% essential_genes, 
+                  Gene1_or_Gene2_essential = Gene1 %in% essential_genes | Gene2 %in% essential_genes) 
+  
+  data_adj_lib <- data_adj %>%
+    dplyr::filter(Note1 %in% c("LibrarySingletons", "LibraryCombinations"))
+  data_or_lib <- data_or %>%
+    dplyr::filter(Note1 %in% c("LibrarySingletons", "LibraryCombinations"))
+  CL_names <- colnames(data_adj_lib)[-(1:13)]
+  other_names <- colnames(data_adj_lib)[1:13]
+  
+  tmp <- lapply(CL_names, function(x) data_adj_lib[, c(other_names, x)] %>% 
+                  dplyr::rename(logFC = !!(x)) %>% 
+                  dplyr::mutate(CL = x))
+  data_adj_lib <- do.call(rbind, tmp)
+  
+  tmp <- lapply(CL_names, function(x) data_or_lib[, c(other_names, x)] %>% 
+                  dplyr::rename(logFC = !!(x)) %>% 
+                  dplyr::mutate(CL = x))
+  data_or_lib <- do.call(rbind, tmp)
+  
+  pl1 <- ggplot(data_adj_lib, 
+                aes(x = lib, y = logFC, fill = lib)) + 
+    geom_boxplot(outlier.size = 1) + 
+    theme_bw() + 
+    xlab("") +
+    ggtitle(sprintf("%s: adjusted", "All CLs")) + 
+    theme(legend.position = "none")
+  
+  pl2 <- ggplot(data_or_lib, 
+                aes(x = lib, y = logFC, fill = lib)) + 
+    geom_boxplot(outlier.size = 1) + 
+    theme_bw() + 
+    xlab("") +
+    ggtitle(sprintf("%s: original", "All CLs")) + 
+    theme(legend.position = "none")
+  
+  pl_lib <- ggpubr::ggarrange(plotlist = list(pl2, pl1),
+                              ncol = 2)
+  
+  data_lib_perc <- data_annot_lib %>%
+    dplyr::group_by(lib) %>%
+    dplyr::summarise(frac_Gene1_ess = sum(Gene1_essential)/length(Gene1_essential), 
+                     n_Gene1_ess = sum(Gene1_essential),
+                     frac_Gene1_or_Gene2_ess = sum(Gene1_or_Gene2_essential)/length(Gene1_or_Gene2_essential), 
+                     n_Gene1_or_Gene2_ess = sum(Gene1_or_Gene2_essential), 
+                     n_tot = length(Gene1_essential))
+  
+  pl_frac <- ggplot(data_lib_perc , aes(x = frac_Gene1_ess,
+                                        y = n_Gene1_ess,
+                                        col = lib,
+                                        label = lib)) +
+    geom_point(size = 2) +
+    # geom_line(alpha = 0.5) + 
+    geom_text_repel(size = 3, max.overlaps = Inf) +
+    guides(color = "none", fill = "none") +
+    theme_bw() + 
+    xlab("Fraction of pairs with Gene1 essential") + 
+    ylab("N. of pairs with Gene1 essential")
+  
+  if (show_plot) {
+    print(pl_lib)
+    print(pl_frac)
+  }
+  
+  if (save_plot) {
+    ggsave(filename = sprintf("%sALLCLs_distr_perLib_LibraryGenes.png", outfold), 
+           units = "in", 
+           plot = pl_lib, 
+           width = 5, 
+           height = 5)
+    
+    ggsave(filename = sprintf("%sFraction_Gene1_ess_perLib_LibraryGenes.png", outfold), 
+           units = "in", 
+           plot = pl_frac, 
+           width = 3, 
+           height = 3)
+  }
+  
+  return(list(logFC_or = data_or_lib, 
+              logFC_adj = data_adj_lib, 
+              perc = data_lib_perc))
+  
+}
 
 

@@ -5,10 +5,12 @@ library(reshape2)
 library(ggplot2)
 library(ggrepel)
 library(pROC)
+library(CRISPRcleanR)
 source("R/batch_integration_functions.R")
 
 #### 
 fold <- "/group/iorio/lucia/datasets/ENCORE_SAMPLES_COPYNUMBER/DATA_FREEZE_v4/"
+fold_cmp <- "/group/iorio/lucia/datasets/CMP_PORTAL/"
 fold_input <- sprintf("%sORIGINAL/", fold)
 fold_lib <- sprintf("%sLIBS/", fold)
 fold_output <- sprintf("%sBATCH_CORRECTED/", fold)
@@ -72,7 +74,7 @@ df <- data.frame(model_id_CMP = unlist(sample_names),
                  lib = unname(unlist(mapply(function(x,y) rep(x,length(y)), 
                                             x = lib_name, y = sample_names, SIMPLIFY = T))))
 
-CMP_table <- read_csv("https://cog.sanger.ac.uk/cmp/download/model_list_20230505.csv") %>%
+CMP_table <- read_csv(sprintf("%smodel_annotation/model_list_20230801.csv", fold_cmp)) %>% 
   dplyr::select(model_id, sample_id, model_name, synonyms, tissue, cancer_type, 
                 tissue_status, COSMIC_ID, BROAD_ID, CCLE_ID) %>%
   dplyr::rename(model_id_CMP = model_id, 
@@ -135,16 +137,86 @@ data_BRCA <- adjust_alldata_kNN(list_df = data[4:6],
 
 # plot distribution
 COLO_allCLs <- plot_CL_distribution(original = data_COLO$original, 
-                     adjusted = data_COLO$adj, 
-                     common_pairs = data_COLO$combat$common_pairs, 
-                     outfold = sprintf("%sCOLO_", fold_output), 
-                     save_plot = TRUE, 
-                     show_plot = TRUE) 
- 
+                                    adjusted = data_COLO$adj, 
+                                    common_pairs = data_COLO$combat$common_pairs, 
+                                    outfold = sprintf("%sCOLO_", fold_output), 
+                                    save_plot = TRUE, 
+                                    show_plot = TRUE) 
+
 BRCA_allCLs <- plot_CL_distribution(original = data_BRCA$original, 
-                     adjusted = data_BRCA$adj, 
-                     common_pairs = data_BRCA$combat$common_pairs, 
-                     outfold = sprintf("%sBRCA_", fold_output), 
-                     save_plot = TRUE, 
-                     show_plot = TRUE) 
+                                    adjusted = data_BRCA$adj, 
+                                    common_pairs = data_BRCA$combat$common_pairs, 
+                                    outfold = sprintf("%sBRCA_", fold_output), 
+                                    save_plot = TRUE, 
+                                    show_plot = TRUE) 
+
+# create final tables and save
+data_adj_COLO <- get_complete_table(
+  list_df = data[1:3], 
+  list_matrix = data_COLO$adj
+)
+data_or_COLO <- get_complete_table(
+  list_df = data[1:3], 
+  list_matrix = data_COLO$original
+)
+
+# save adjusted output
+write.table(file = sprintf("%sCOLO_FINAL_EXACT_logFC_sgRNA_ComBatCorrectionLIBs.txt", fold_output), 
+            x = data_adj_COLO, 
+            quote = F, 
+            col.names = T, 
+            row.names = F)
+
+data_adj_BRCA <- get_complete_table(
+  list_df = data[4:6], 
+  list_matrix = data_BRCA$adj
+)
+
+data_or_BRCA <- get_complete_table(
+  list_df = data[4:6], 
+  list_matrix = data_BRCA$original
+)
+
+# save adjusted output
+write.table(file = sprintf("%sBRCA_FINAL_EXACT_logFC_sgRNA_ComBatCorrectionLIBs.txt", fold_output), 
+            x = data_adj_BRCA, 
+            quote = F, 
+            col.names = T, 
+            row.names = F)
+
+### external validation: check CL specific distributions before and after correction ###
+ktest_COLO <- test_distributions_per_class(data_adj = data_adj_COLO, 
+                                           data_or = data_or_COLO, 
+                                           outfold = sprintf("%sCOLO_", fold_output), 
+                                           save_plot = TRUE, 
+                                           show_plot = TRUE)
+
+ktest_BRCA <- test_distributions_per_class(data_adj = data_adj_BRCA, 
+                                           data_or = data_or_BRCA, 
+                                           outfold = sprintf("%sBRCA_", fold_output), 
+                                           save_plot = TRUE, 
+                                           show_plot = TRUE)
+
+
+# those in library singletons, do they have an in balance in essential genes?
+data("ADaM2021_essential")
+COLO_lib_genes <- plot_library_genes(data_adj = data_adj_COLO, 
+                   data_or = data_or_COLO, 
+                   essential_genes = ADaM2021_essential,  
+                   outfold = sprintf("%sCOLO_", fold_output), 
+                   save_plot = TRUE, 
+                   show_plot = TRUE)
+
+BRCA_lib_genes <- plot_library_genes(data_adj = data_adj_BRCA, 
+                   data_or = data_or_BRCA, 
+                   essential_genes = ADaM2021_essential,  
+                   outfold = sprintf("%sBRCA_", fold_output), 
+                   save_plot = TRUE, 
+                   show_plot = TRUE)
+
+
+
+
+
+
 
