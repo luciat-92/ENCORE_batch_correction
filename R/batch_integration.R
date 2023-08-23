@@ -110,9 +110,13 @@ common_BRCA <- pca_commonpairs_function(data[4:6],
 
 plot_dist_commonpairs(list_df = data[1:3], 
                       outfold = sprintf("%sCOLO_", fold_output))
+plot_dist_PPV(list_df = data[1:3], 
+              outfold = sprintf("%sCOLO_", fold_output))
 
 plot_dist_commonpairs(list_df = data[4:6], 
                       outfold = sprintf("%sBRCA_", fold_output))
+plot_dist_PPV(list_df = data[4:6], 
+              outfold = sprintf("%sBRCA_", fold_output))
 
 #### Test Neighbors strategy ####
 # save plots

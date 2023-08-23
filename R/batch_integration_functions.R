@@ -725,7 +725,7 @@ plot_CL_distribution <- function(original,
       xlab("") +
       coord_flip() + 
       theme(axis.text.y = element_blank()) + 
-      ggtitle(sprintf("%s: adjusted", CL_name))
+      ggtitle(sprintf("%s: Corrected", CL_name))
     
     pl2 <- ggplot(df_CL[[i]],
                   aes(x = Note1, y = logFC_or, fill = lib)) + 
@@ -733,7 +733,7 @@ plot_CL_distribution <- function(original,
       theme_bw() + 
       xlab("") +
       coord_flip() + 
-      ggtitle(sprintf("%s: original", CL_name))
+      ggtitle(sprintf("%s: Raw", CL_name))
     
     pl3 <- ggplot(subset(df_CL[[i]], SEQ_pair %in% common_pairs),
                   aes(x = Note1, y = logFC_adj, fill = lib)) +
@@ -742,7 +742,7 @@ plot_CL_distribution <- function(original,
       xlab("") +
       coord_flip() +
       theme(axis.text.y = element_blank()) + 
-      ggtitle(sprintf("%s: adjusted (common pairs)", CL_name))
+      ggtitle(sprintf("%s: Corrected (common pairs)", CL_name))
 
     pl4 <- ggplot(subset(df_CL[[i]], SEQ_pair %in% common_pairs),
                   aes(x = Note1, y = logFC_or, fill = lib)) +
@@ -750,7 +750,7 @@ plot_CL_distribution <- function(original,
       theme_bw() +
       xlab("") +
       coord_flip() +
-      ggtitle(sprintf("%s: original (common pairs)", CL_name))
+      ggtitle(sprintf("%s: Raw (common pairs)", CL_name))
 
     pl[[i]] <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1), 
                                  heights = c(0.8,1),
@@ -773,7 +773,7 @@ plot_CL_distribution <- function(original,
     xlab("") +
     coord_flip() + 
     theme(axis.text.y = element_blank()) + 
-    ggtitle(sprintf("%s: adjusted", "All CLs"))
+    ggtitle(sprintf("%s: Corrected", "All CLs"))
   
   pl2 <- ggplot(df_tot,
                 aes(x = Note1, y = logFC_or, fill = lib)) + 
@@ -782,7 +782,7 @@ plot_CL_distribution <- function(original,
     xlab("") +
     coord_flip() + 
     theme(axis.text.y = element_text(size = 10)) + 
-    ggtitle(sprintf("%s: original", "All CLs"))
+    ggtitle(sprintf("%s: Raw", "All CLs"))
   
   pl3 <- ggplot(subset(df_tot, SEQ_pair %in% common_pairs), 
                 aes(x = Note1lib_common, y = logFC_adj, fill = lib)) + 
@@ -791,7 +791,7 @@ plot_CL_distribution <- function(original,
     xlab("") +
     coord_flip() + 
     theme(axis.text.y = element_blank()) + 
-    ggtitle(sprintf("%s: adjusted (common pairs)", "All CLs"))
+    ggtitle(sprintf("%s: Corrected (common pairs)", "All CLs"))
   
   pl4 <- ggplot(subset(df_tot, SEQ_pair %in% common_pairs),
                 aes(x = Note1lib_common, y = logFC_or, fill = lib)) + 
@@ -800,7 +800,7 @@ plot_CL_distribution <- function(original,
     xlab("") +
     coord_flip() + 
     theme(axis.text.y = element_text(size = 10)) + 
-    ggtitle(sprintf("%s: original (common pairs)", "All CLs"))
+    ggtitle(sprintf("%s: Raw (common pairs)", "All CLs"))
   
   pl_class <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1), 
                                heights = c(0.8,1),
@@ -823,28 +823,28 @@ plot_CL_distribution <- function(original,
     geom_boxplot(outlier.size = 1) + 
     theme_bw() + 
     xlab("") +
-    ggtitle(sprintf("%s: adjusted", "All CLs"))
+    ggtitle(sprintf("%s: Corrected", "All CLs"))
   
   pl2 <- ggplot(df_tot,
                 aes(x = lib, y = logFC_or, fill = lib)) + 
     geom_boxplot(outlier.size = 1) + 
     theme_bw() + 
     xlab("") +
-    ggtitle(sprintf("%s: original", "All CLs"))
+    ggtitle(sprintf("%s: Raw", "All CLs"))
   
   pl3 <- ggplot(subset(df_tot, SEQ_pair %in% common_pairs), 
                 aes(x = lib, y = logFC_adj, fill = lib)) + 
     geom_boxplot(outlier.size = 1) + 
     theme_bw() + 
     xlab("") +
-    ggtitle(sprintf("%s: adjusted (common pairs)", "All CLs"))
+    ggtitle(sprintf("%s: Corrected (common pairs)", "All CLs"))
   
   pl4 <- ggplot(subset(df_tot, SEQ_pair %in% common_pairs),
                 aes(x = lib, y = logFC_or, fill = lib)) + 
     geom_boxplot(outlier.size = 1) + 
     theme_bw() + 
     xlab("") +
-    ggtitle(sprintf("%s: original (common pairs)", "All CLs"))
+    ggtitle(sprintf("%s: Raw (common pairs)", "All CLs"))
   
   pl_lib <- ggpubr::ggarrange(plotlist = list(pl4, pl3, pl2, pl1),
                           ncol = 2, 
@@ -869,7 +869,7 @@ plot_CL_distribution <- function(original,
   
 }
 
-# get correlation
+# get median distance
 dist_commonpairs <- function(mat_common){
   
   dist_mat <- as.matrix(dist(t(mat_common),method = 'euclidean'))
@@ -889,6 +889,95 @@ dist_commonpairs <- function(mat_common){
               CLs = data.frame(name = names(inner_CLs), inner = inner_CLs, outer = outer_CLs)))
 }
 
+# get ordered list
+sorted_dist <- function(mat_common){
+  
+  dist_matrix <- as.matrix(dist(t(mat_common),
+                                   method = 'euclidean'))
+  
+  upper_tri_indices <- which(upper.tri(dist_matrix, diag = FALSE), arr.ind = TRUE)
+  
+  df_dist <- data.frame(
+    sample1 = rownames(dist_matrix)[upper_tri_indices[, 1]],
+    sample2 = colnames(dist_matrix)[upper_tri_indices[, 2]],
+    dist = dist_matrix[upper_tri_indices]
+  ) %>% 
+    dplyr::arrange(dist) %>%
+    dplyr::mutate(sample1_CL = str_split_fixed(sample1, pattern = "_", n = 2)[,1], 
+                  sample2_CL = str_split_fixed(sample2, pattern = "_", n = 2)[,1],
+                  sample1_lib = str_split_fixed(sample1, pattern = "_", n = 2)[,2], 
+                  sample2_lib = str_split_fixed(sample2, pattern = "_", n = 2)[,2]) %>%
+    dplyr::mutate(same_lib = sample1_lib == sample2_lib, 
+                  same_CL = sample1_CL == sample2_CL)
+
+  return(df_dist)  
+}
+  
+
+plot_dist_PPV <- function(list_df,  
+                          outfold){
+  
+  res_combat <- combat_correction(list_df, 
+                                  save_plot = FALSE,
+                                  show_plot = FALSE, 
+                                  outfold = NULL)
+  
+  dist_sorted_adj <- sorted_dist(mat_common = res_combat$corrected)
+  df_PPV_adj <- data.frame(
+    CL = cumsum(dist_sorted_adj$same_CL)/1:nrow(dist_sorted_adj), 
+    lib = cumsum(dist_sorted_adj$same_lib)/1:nrow(dist_sorted_adj),
+    id = 1:nrow(dist_sorted_adj)
+  )
+  df_PPV_adj <- melt(data = df_PPV_adj, 
+                     id.vars = "id",
+                     variable.name = "type", 
+                     value.name = "PPV")
+  
+  dist_sorted_raw <- sorted_dist(mat_common = res_combat$raw)
+  df_PPV_raw <- data.frame(
+    CL = cumsum(dist_sorted_raw$same_CL)/1:nrow(dist_sorted_raw), 
+    lib = cumsum(dist_sorted_raw$same_lib)/1:nrow(dist_sorted_raw),
+    id = 1:nrow(dist_sorted_adj)
+  )
+  df_PPV_raw <- melt(data = df_PPV_raw, 
+                     id.vars = "id",
+                     variable.name = "type", 
+                     value.name = "PPV")
+  
+  pl1 <- ggplot(df_PPV_raw, aes(x = id,
+                               y = PPV,
+                               color = type)) +
+    geom_line() +
+    xlab("K closest sample pair") + 
+    ylab("PPV = n. same CL or lib / K") + 
+    theme_bw() + 
+    theme(legend.title = element_blank()) +
+    ggtitle("Raw")
+  
+  pl2 <- ggplot(df_PPV_adj, aes(x = id,
+                                y = PPV,
+                                color = type)) +
+    geom_line() +
+    xlab("K closest sample pair") + 
+    ylab("PPV = n. same CL or lib / K") + 
+    theme_bw() + 
+    theme(legend.title = element_blank()) +
+    ggtitle("ComBat Corrected")
+
+  pl <- ggpubr::ggarrange(plotlist = list(pl1, pl2), ncol = 2, 
+                          common.legend = TRUE)
+  print(pl)
+    
+  ggsave(filename = sprintf("%sPPV_CL-lib.png", outfold), 
+         units = "in", 
+         plot = pl, 
+         width = 7, 
+         height = 4)
+  
+  
+}
+
+
 plot_dist_commonpairs <- function(list_df,  
                                   outfold){
   
@@ -901,11 +990,12 @@ plot_dist_commonpairs <- function(list_df,
   dist_combat <- dist_commonpairs(res_combat$corrected)
   
   CL_dist <- data.frame(name = rep(dist_raw$CLs$name, 2), dist = c(dist_raw$CLs$inner, dist_raw$CLs$outer), 
-                        type_dist = c(rep("inside", nrow(dist_raw$CLs)), rep("outside", nrow(dist_raw$CLs))), 
+                        type_dist = c(rep("same", nrow(dist_raw$CLs)), rep("different", nrow(dist_raw$CLs))), 
                         type_combat = "Raw")
   CL_dist <- rbind(CL_dist, data.frame(name = rep(dist_combat$CLs$name, 2), dist = c(dist_combat$CLs$inner, dist_combat$CLs$outer), 
-                                       type_dist = c(rep("inside", nrow(dist_combat$CLs)), rep("outside", nrow(dist_combat$CLs))), 
-                                       type_combat = "ComBat corrected"))
+                                       type_dist = c(rep("same", nrow(dist_combat$CLs)), rep("different", nrow(dist_combat$CLs))), 
+                                       type_combat = "ComBat Corrected"))
+  CL_dist$type_combat <- factor(CL_dist$type_combat, levels = c("Raw", "ComBat Corrected"))
   pl1 <- ggplot(CL_dist , aes(x = type_combat,
                               y = dist,
                               fill = type_dist)) +
@@ -914,14 +1004,15 @@ plot_dist_commonpairs <- function(list_df,
     xlab("") + 
     ylab("Median Eucl. distance") + 
     theme_bw() + 
-    ggtitle("in and out same CLs")
+    ggtitle("CLs")
   
   libs_dist <- data.frame(name = rep(dist_raw$libs$name, 2), dist = c(dist_raw$libs$inner, dist_raw$libs$outer), 
-                          type_dist = c(rep("inside", nrow(dist_raw$libs)), rep("outside", nrow(dist_raw$libs))), 
+                          type_dist = c(rep("same", nrow(dist_raw$libs)), rep("different", nrow(dist_raw$libs))), 
                           type_combat = "Raw")
   libs_dist <- rbind(libs_dist, data.frame(name = rep(dist_combat$libs$name, 2), dist = c(dist_combat$libs$inner, dist_combat$libs$outer), 
-                                           type_dist = c(rep("inside", nrow(dist_combat$libs)), rep("outside", nrow(dist_combat$libs))), 
-                                           type_combat = "ComBat corrected"))
+                                           type_dist = c(rep("same", nrow(dist_combat$libs)), rep("different", nrow(dist_combat$libs))), 
+                                           type_combat = "ComBat Corrected"))
+  libs_dist$type_combat <- factor(libs_dist$type_combat, levels = c("Raw", "ComBat Corrected"))
   pl2 <- ggplot(libs_dist , aes(x = type_combat,
                                 y = dist,
                                 fill = type_dist)) +
@@ -930,7 +1021,7 @@ plot_dist_commonpairs <- function(list_df,
     xlab("") + 
     ylab("Median Eucl. distance") + 
     theme_bw() + 
-    ggtitle("in and out same library")
+    ggtitle("Libraries")
   pl <- ggpubr::ggarrange(plotlist = list(pl2, pl1), ncol = 2, common.legend = TRUE)
   print(pl)
   
@@ -1246,8 +1337,8 @@ test_distributions_per_class <- function(data_adj,
     # geom_text_repel(size = 3, max.overlaps = Inf) +
     theme_bw() + 
     theme(legend.position = "right", legend.title = element_blank()) + 
-    xlab("After Adjustment") + 
-    ylab("Original") + 
+    xlab("Corrected") + 
+    ylab("Raw") + 
     ggtitle("-log10 P-value from Kruskal-Wallis test")
   
   if (show_plot) {
@@ -1300,7 +1391,7 @@ plot_library_genes <- function(data_adj,
     geom_boxplot(outlier.size = 1) + 
     theme_bw() + 
     xlab("") +
-    ggtitle(sprintf("%s: adjusted", "All CLs")) + 
+    ggtitle(sprintf("%s: Corrected", "All CLs")) + 
     theme(legend.position = "none")
   
   pl2 <- ggplot(data_or_lib, 
@@ -1308,7 +1399,7 @@ plot_library_genes <- function(data_adj,
     geom_boxplot(outlier.size = 1) + 
     theme_bw() + 
     xlab("") +
-    ggtitle(sprintf("%s: original", "All CLs")) + 
+    ggtitle(sprintf("%s: Raw", "All CLs")) + 
     theme(legend.position = "none")
   
   pl_lib <- ggpubr::ggarrange(plotlist = list(pl2, pl1),
