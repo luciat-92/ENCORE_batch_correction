@@ -664,10 +664,17 @@ adjusted.data_all <- mapply(function(x,y,z) t( (x*z) + y ),
                             z = var.pooled_all, 
                             SIMPLIFY = FALSE)
 
+# save param
+gamma_mean <- lapply(mean_all, function(x) x[,1])
+names(gamma_mean) <- names(list_df)
+delta_var <- lapply(var_all, function(x) x[,1])
+names(delta_var) <- names(list_df)
+
 return(list(adj = adjusted.data_all, 
             original = list_logFC, 
             combat = combat_res_all, 
-            param_notmatching = param_approx))
+            param_notmatching = param_approx, 
+            param_all = list(gamma_mean = gamma_mean, delta_var = delta_var)))
 
 }
 

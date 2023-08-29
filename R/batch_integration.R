@@ -170,6 +170,10 @@ write.table(file = sprintf("%sCOLO_FINAL_EXACT_logFC_sgRNA_ComBatCorrectionLIBs.
             quote = F, 
             col.names = T, 
             row.names = F)
+# save parameters for each guide pair
+param <- data_COLO$param_all
+save(param, 
+     file = sprintf("%sCOLO_FINAL_EXACT_logFC_sgRNA_ComBatParam.RData", fold_output))
 
 data_adj_BRCA <- get_complete_table(
   list_df = data[4:6], 
@@ -187,6 +191,10 @@ write.table(file = sprintf("%sBRCA_FINAL_EXACT_logFC_sgRNA_ComBatCorrectionLIBs.
             quote = F, 
             col.names = T, 
             row.names = F)
+
+param <- data_BRCA$param_all
+save(param, 
+     file = sprintf("%sBRCA_FINAL_EXACT_logFC_sgRNA_ComBatParam.RData", fold_output))
 
 ### external validation: check CL specific distributions before and after correction ###
 ktest_COLO <- test_distributions_per_class(data_adj = data_adj_COLO, 
