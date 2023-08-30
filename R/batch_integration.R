@@ -60,6 +60,18 @@ for (i in 1:length(lib_name)) {
   data[[i]] <- left_join(data[[i]], tmp, by = "ID") %>%
     dplyr::filter(!duplicated(SEQ_pair))
   
+  # get same order as in data (possible removal of the same SEQ_pair)
+  library[[i]] <-  library[[i]][match(data[[i]]$ID, library[[i]]$ID),] %>%
+    dplyr::mutate(lib = curr_lib, .after = ID) %>%
+    dplyr::mutate(ID_lib = paste(ID, curr_lib, sep = "_"), .after = lib) %>%
+    dplyr::mutate(SEQ_pair = paste0(sgRNA1_WGE_Sequence, "~", sgRNA2_WGE_Sequence))
+  
+  if ("MyNotes" %in% colnames(library[[i]])) {
+    library[[i]] <- library[[i]] %>%
+      dplyr::select(-MyNotes)
+  }
+    
+  
 }
 names(data) <- names(library) <- lib_name
 
@@ -170,6 +182,14 @@ write.table(file = sprintf("%sCOLO_FINAL_EXACT_logFC_sgRNA_ComBatCorrectionLIBs.
             quote = F, 
             col.names = T, 
             row.names = F)
+
+# save combined libraries 
+write.table(file = sprintf("%sENCORE_GI_COREAD_Library_ALL.txt", fold_output), 
+            x = bind_rows(library[1:3]), 
+            quote = F, 
+            col.names = T, 
+            row.names = F)
+
 # save parameters for each guide pair
 param <- data_COLO$param_all
 save(param, 
@@ -188,6 +208,13 @@ data_or_BRCA <- get_complete_table(
 # save adjusted output
 write.table(file = sprintf("%sBRCA_FINAL_EXACT_logFC_sgRNA_ComBatCorrectionLIBs.txt", fold_output), 
             x = data_adj_BRCA, 
+            quote = F, 
+            col.names = T, 
+            row.names = F)
+
+# save combined libraries 
+write.table(file = sprintf("%sENCORE_GI_BRCA_Library_ALL.txt", fold_output), 
+            x = bind_rows(library[4:6]), 
             quote = F, 
             col.names = T, 
             row.names = F)
