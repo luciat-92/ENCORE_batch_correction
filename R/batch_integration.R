@@ -181,14 +181,16 @@ write.table(file = sprintf("%sCOLO_FINAL_EXACT_logFC_sgRNA_ComBatCorrectionLIBs.
             x = data_adj_COLO, 
             quote = F, 
             col.names = T, 
-            row.names = F)
+            row.names = F, 
+            sep = "\t")
 
 # save combined libraries 
 write.table(file = sprintf("%sENCORE_GI_COREAD_Library_ALL.txt", fold_output), 
             x = bind_rows(library[1:3]), 
             quote = F, 
             col.names = T, 
-            row.names = F)
+            row.names = F, 
+            sep = "\t")
 
 # save parameters for each guide pair
 param <- data_COLO$param_all
@@ -210,14 +212,16 @@ write.table(file = sprintf("%sBRCA_FINAL_EXACT_logFC_sgRNA_ComBatCorrectionLIBs.
             x = data_adj_BRCA, 
             quote = F, 
             col.names = T, 
-            row.names = F)
+            row.names = F, 
+            sep = "\t")
 
 # save combined libraries 
 write.table(file = sprintf("%sENCORE_GI_BRCA_Library_ALL.txt", fold_output), 
             x = bind_rows(library[4:6]), 
             quote = F, 
             col.names = T, 
-            row.names = F)
+            row.names = F, 
+            sep = "\t")
 
 param <- data_BRCA$param_all
 save(param, 
