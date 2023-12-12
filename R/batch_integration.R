@@ -6,85 +6,76 @@ library(ggplot2)
 library(ggrepel)
 library(pROC)
 library(CRISPRcleanR)
+library(effectsize)
 source("R/batch_integration_functions.R")
 
 #### 
-fold <- "/group/iorio/lucia/datasets/ENCORE_SAMPLES_COPYNUMBER/DATA_FREEZE_v4/"
+fold <- "/group/iorio/lucia/datasets/ENCORE_SAMPLES_COPYNUMBER/"
 fold_cmp <- "/group/iorio/lucia/datasets/CMP_PORTAL/"
-fold_input <- sprintf("%sORIGINAL/", fold)
-fold_lib <- sprintf("%sLIBS/", fold)
-fold_output <- sprintf("%sBATCH_CORRECTED/", fold)
+fold_input <- sprintf("%sDATA_FREEZE_v4_NOV_2023/cas9neg_rdsFiles/", fold)
+fold_lib <- sprintf("%sDATA_META/LIBS/", fold)
+fold_output <- sprintf("%sDATA_FREEZE_v4_NOV_2023/BATCH_CORRECTED/", fold)
 ####
 
 lib_name <- c("COLO1", "COLO2", "COLO3", 
-              "BRCA1", "BRCA2", "BRCA3")
-data <- library <- list()
+              "BRCA1", "BRCA2", "BRCA3") %>% tolower()
+
+res_c91 <- load_data_rds(
+  fold_input = fold_input, 
+  fold_lib = fold_lib, 
+  negcontrol = "c91")
+
+res_c92 <- load_data_rds(
+  fold_input = fold_input, 
+  fold_lib = fold_lib, 
+  negcontrol = "c92")
+
+# create avg of the two plasmids
+data_cavg <- list()
+data_c91 <- res_c91$data
+data_c92 <- res_c92$data
+
+s_91 <- lapply(data_c91, function(x) 
+  colnames(x)[grepl("SID", colnames(x))])
+data_c91_logFC <- mapply(function(x, y) x[, y], x = data_c91, y = s_91)
+
+s_92 <- lapply(data_c92, function(x) 
+  colnames(x)[grepl("SID", colnames(x))])
+data_c92_logFC <- mapply(function(x, y) x[, y], x = data_c92, y = s_92)
 
 for (i in 1:length(lib_name)) {
   
-  curr_lib <- lib_name[i]
-  print(curr_lib)
-  data[[i]] <- read_csv(sprintf("%s%s_FINAL_EXACT_logFC_sgRNA_scaled.txt", fold_input, curr_lib))  
+  lib_idx <- lib_name[i]
+  v1 <- data_c91_logFC[[lib_idx]]
+  v2 <- data_c92_logFC[[lib_idx]]
   
-  # load lib
-  if (grepl("COLO", curr_lib)) {
-    part1 <- "COREAD"
-  }else{
-    part1 <- "BRCA"
+  if (nrow(v1) != nrow(v2)) {
+    stop("Not the same number of guide pairs!")
   }
-  part2 <- stringr::str_sub(curr_lib, start = 5, end = 5)
-  lib_file_name <- sprintf("%sENCORE_GI_%s_Library_%s.txt", fold_lib, part1, part2)
-  
-  library[[i]] <- readr::read_tsv(lib_file_name,
-    col_types = readr::cols(.default = "?", 
-                            sgRNA1_Chr = "c", 
-                            sgRNA2_Chr = "c", 
-                            sgRNA1_WGE_ID = "c", 
-                            sgRNA2_WGE_ID = "c"), 
-    show_col_types = FALSE)
-  
-  # filter library per values in data
-  library[[i]] <-  library[[i]][match(data[[i]]$sgrna, library[[i]]$ID),]
-  
-  # rename columns
-  data[[i]] <- data[[i]] %>%
-    dplyr::rename(ID = sgrna) %>%
-    dplyr::mutate(lib = curr_lib, .after = ID) %>%
-    dplyr::mutate(ID_lib = paste(ID, curr_lib, sep = "_"), .after = lib) %>%
-    dplyr::select(-dplyr::ends_with("_logFC"))
-  
-  tmp <-  library[[i]] %>%
-    dplyr::select(ID, sgRNA1_WGE_ID, sgRNA1_WGE_Sequence, sgRNA2_WGE_ID, sgRNA2_WGE_Sequence) %>%
-    dplyr::mutate(SEQ_pair = paste0(sgRNA1_WGE_Sequence, "~", sgRNA2_WGE_Sequence))
-  
-  data[[i]] <- left_join(data[[i]], tmp, by = "ID") %>%
-    dplyr::filter(!duplicated(SEQ_pair))
-  
-  # get same order as in data (possible removal of the same SEQ_pair)
-  library[[i]] <-  library[[i]][match(data[[i]]$ID, library[[i]]$ID),] %>%
-    dplyr::mutate(lib = curr_lib, .after = ID) %>%
-    dplyr::mutate(ID_lib = paste(ID, curr_lib, sep = "_"), .after = lib) %>%
-    dplyr::mutate(SEQ_pair = paste0(sgRNA1_WGE_Sequence, "~", sgRNA2_WGE_Sequence))
-  
-  if ("MyNotes" %in% colnames(library[[i]])) {
-    library[[i]] <- library[[i]] %>%
-      dplyr::select(-MyNotes)
+  if (!identical(data_c91[[i]]$ID, data_c92[[i]]$ID)) {
+    stop("Guide pairs do not have the same order!")
   }
-    
+  if (!identical(colnames(v1), colnames(v2))) {
+    stop("Not same samples in cas9negatives")
+  }
   
+  data_cavg_logFC <- (v1 + v2)/2
+  # use c91, same in both!
+  data_cavg[[i]] <- cbind(data_c91[[i]][, !colnames(data_c91[[i]]) %in% s_91[[i]]], data_cavg_logFC)
 }
-names(data) <- names(library) <- lib_name
+names(data_cavg) <- lib_name
+res_cavg <- list(data = data_cavg, library = res_c91$library)
 
+#####################
 # which cell lines?
-sample_names <- lapply(data, function(x) 
-  colnames(x)[grepl("_LFC_RAW", colnames(x))])
-
-sample_names <- lapply(sample_names, function(x) 
-  unique(str_split_fixed(string = x, pattern = "[_]", n = 4)[,1]))
+# same for all datasets, use data_cavg
+sample_names <- lapply(data_cavg, function(x) 
+  colnames(x)[grepl("SID", colnames(x))])
 
 df <- data.frame(model_id_CMP = unlist(sample_names), 
                  lib = unname(unlist(mapply(function(x,y) rep(x,length(y)), 
-                                            x = lib_name, y = sample_names, SIMPLIFY = T))))
+                                            x = lib_name, 
+                                            y = sample_names, SIMPLIFY = T))))
 
 CMP_table <- read_csv(sprintf("%smodel_annotation/model_list_20230801.csv", fold_cmp)) %>% 
   dplyr::select(model_id, sample_id, model_name, synonyms, tissue, cancer_type, 
@@ -96,9 +87,9 @@ CMP_table <- read_csv(sprintf("%smodel_annotation/model_list_20230801.csv", fold
 model_encore_table <- dplyr::left_join(df, CMP_table, by = "model_id_CMP") %>%
   mutate(model_name_uppercase = str_replace_all(model_name_CMP, "[-]", "")) %>%
   mutate(model_name_uppercase = toupper(model_name_uppercase))
-
 model_encore_table <- model_encore_table %>% 
   arrange(lib)
+
 CL <- unique(model_encore_table$model_name_CMP)
 tab_count <- table(model_encore_table$model_name_CMP, model_encore_table$lib)
 tab_count <- tab_count[match(CL, rownames(tab_count)),]
@@ -108,64 +99,64 @@ CL_summary <- pheatmap::pheatmap(tab_count,
                                  cluster_rows = TRUE,
                                  cluster_cols = FALSE,
                                  treeheight_row = 0)
-
+############
 # plot PCA:
-common_COLO <- pca_commonpairs_function(data[1:3], 
-                                        outfold = sprintf("%sCOLO_", fold_output), 
-                                        save_plot = TRUE, 
+common_COLO <- pca_commonpairs_function(res_cavg$data[1:3], 
+                                        # outfold = sprintf("%sCOLO_", fold_output), 
+                                        save_plot = FALSE, 
                                         show_plot = TRUE) 
 
-common_BRCA <- pca_commonpairs_function(data[4:6], 
-                                        outfold = sprintf("%sBRCA_", fold_output), 
-                                        save_plot = TRUE, 
+common_BRCA <- pca_commonpairs_function(res_cavg$data[4:6], 
+                                        # outfold = sprintf("%sBRCA_", fold_output), 
+                                        save_plot = FALSE, 
                                         show_plot = TRUE) 
 
-plot_dist_commonpairs(list_df = data[1:3], 
-                      outfold = sprintf("%sCOLO_", fold_output))
-plot_dist_PPV(list_df = data[1:3], 
-              outfold = sprintf("%sCOLO_", fold_output))
+plot_dist_commonpairs(list_df = res_cavg$data[1:3])
+                      # outfold = sprintf("%sCOLO_", fold_output))
+plot_dist_PPV(list_df = res_cavg$data[1:3])
+              # outfold = sprintf("%sCOLO_", fold_output))
 
-plot_dist_commonpairs(list_df = data[4:6], 
-                      outfold = sprintf("%sBRCA_", fold_output))
-plot_dist_PPV(list_df = data[4:6], 
-              outfold = sprintf("%sBRCA_", fold_output))
+plot_dist_commonpairs(list_df = res_cavg$data[4:6])
+                      #outfold = sprintf("%sBRCA_", fold_output))
+plot_dist_PPV(list_df = res_cavg$data[4:6])
+              # outfold = sprintf("%sBRCA_", fold_output))
 
 #### Test Neighbors strategy ####
 # save plots
-validation_COLO <- validate_NN_approximation(list_df = data[1:3], 
-                                             outfold = sprintf("%sCOLO_", fold_output))
+validation_COLO <- validate_NN_approximation(list_df = res_cavg$data[1:3]) 
+                                             # outfold = sprintf("%sCOLO_", fold_output))
 
-validation_BRCA <- validate_NN_approximation(list_df = data[4:6], 
-                                             outfold = sprintf("%sBRCA_", fold_output))
+validation_BRCA <- validate_NN_approximation(list_df = res_cavg$data[4:6])
+                                             # outfold = sprintf("%sBRCA_", fold_output))
 
 # get all corrected dataset
-data_COLO <- adjust_alldata_kNN(list_df = data[1:3], 
+data_COLO <- adjust_alldata_kNN(list_df = res_cavg$data[1:3], 
                                 kNN = 5,
-                                outfold = sprintf("%sCOLO_", fold_output), 
-                                save_plot = TRUE, 
+                                #outfold = sprintf("%sCOLO_", fold_output), 
+                                save_plot = FALSE, 
                                 show_plot = TRUE) 
 
-data_BRCA <- adjust_alldata_kNN(list_df = data[4:6], 
+data_BRCA <- adjust_alldata_kNN(list_df = res_cavg$data[4:6], 
                                 kNN = 5, 
-                                outfold = sprintf("%sBRCA_", fold_output), 
-                                save_plot = TRUE, 
+                                # outfold = sprintf("%sBRCA_", fold_output), 
+                                save_plot = FALSE, 
                                 show_plot = TRUE) 
 
 # plot distribution
 COLO_allCLs <- plot_CL_distribution(original = data_COLO$original, 
                                     adjusted = data_COLO$adj, 
                                     common_pairs = data_COLO$combat$common_pairs, 
-                                    outfold = sprintf("%sCOLO_", fold_output), 
-                                    save_plot = TRUE, 
+                                    # outfold = sprintf("%sCOLO_", fold_output), 
+                                    save_plot = FALSE, 
                                     show_plot = TRUE) 
 
 BRCA_allCLs <- plot_CL_distribution(original = data_BRCA$original, 
                                     adjusted = data_BRCA$adj, 
                                     common_pairs = data_BRCA$combat$common_pairs, 
-                                    outfold = sprintf("%sBRCA_", fold_output), 
-                                    save_plot = TRUE, 
+                                    # outfold = sprintf("%sBRCA_", fold_output), 
+                                    save_plot = FALSE, 
                                     show_plot = TRUE) 
-
+#### FROM HERE ####
 # create final tables and save
 data_adj_COLO <- get_complete_table(
   list_df = data[1:3], 

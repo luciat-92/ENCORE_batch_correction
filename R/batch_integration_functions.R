@@ -1,3 +1,110 @@
+# compute average per cell line
+compute_avglogFC_repetitions <- function(data_logFC){
+  
+  CL_names <- sort(unique(str_split_fixed(string = colnames(data_logFC), 
+                                          pattern = "[_]", n = 2)[,1]))
+  
+  data_mean_logFC <- matrix(nrow = nrow(data_logFC), ncol = length(CL_names))
+  
+  for (idx in 1:length(CL_names)) {
+    CL_id <- CL_names[idx]
+    tmp <- data_logFC[,grepl(CL_id, colnames(data_logFC))]
+    if (ncol(tmp) > 1) {
+      tmp_mean <- rowMeans(tmp)
+    }else{
+      tmp_mean <- tmp[,1]
+    }
+    data_mean_logFC[,idx] <- tmp_mean
+  }
+  rownames(data_mean_logFC) <- rownames(data_logFC)
+  colnames(data_mean_logFC) <- CL_names
+  return(data_mean_logFC)
+  
+}
+
+# load data (rds format)
+load_data_rds <- function(fold_input, fold_lib, negcontrol){
+  
+  lib_name <- c("COLO1", "COLO2", "COLO3", 
+                "BRCA1", "BRCA2", "BRCA3") %>% tolower()
+  
+  
+  data <- library <- list()
+  for (i in 1:length(lib_name)) {
+    
+    curr_lib <- lib_name[i]
+    print(curr_lib)
+    
+    data[[i]] <- read_rds(sprintf("%s%s_%s.rds", fold_input, curr_lib, negcontrol))  
+    # compute mean per same cell line across repetitions
+    data[[i]] <- compute_avglogFC_repetitions(data[[i]])
+    
+    data_lib <- read_rds(sprintf("%sIDs_%s.rds", fold_input, curr_lib)) %>% as.data.frame()
+    data_lib <- data_lib %>% arrange(ID)
+    if (!identical(data_lib$ID, rownames(data[[i]]))) {
+      print("reorder data_lib")
+      data_lib <- data_lib[match(rownames(data[[i]]), data_lib$ID), ]
+    }
+    
+    if (!"Gene" %in% colnames(data_lib)) {
+      data_lib <- data_lib %>% 
+        mutate(Gene = paste(Gene1, Gene2, sep = "~"))
+    }
+    data[[i]] <- bind_cols(data_lib, as.data.frame(data[[i]]))
+    
+    # load lib
+    if (grepl("COLO", toupper(curr_lib))) {
+      part1 <- "COREAD"
+    }else{
+      part1 <- "BRCA"
+    }
+    part2 <- stringr::str_sub(curr_lib, start = 5, end = 5)
+    lib_file_name <- sprintf("%sENCORE_GI_%s_Library_%s.txt", fold_lib, part1, part2)
+    
+    library[[i]] <- readr::read_tsv(lib_file_name,
+                                    col_types = readr::cols(.default = "?", 
+                                                            sgRNA1_Chr = "c", 
+                                                            sgRNA2_Chr = "c", 
+                                                            sgRNA1_WGE_ID = "c", 
+                                                            sgRNA2_WGE_ID = "c"), 
+                                    show_col_types = FALSE)
+    
+    # filter library per values in data
+    library[[i]] <-  library[[i]][match(data[[i]]$ID, library[[i]]$ID),]
+    
+    # rename columns
+    data[[i]] <- data[[i]] %>%
+      dplyr::mutate(lib = curr_lib, .after = ID) %>%
+      dplyr::mutate(ID_lib = paste(ID, curr_lib, sep = "_"), .after = lib) %>%
+      dplyr::select(-dplyr::ends_with("_logFC"))
+    
+    tmp <-  library[[i]] %>%
+      dplyr::select(ID, sgRNA1_WGE_ID, sgRNA1_WGE_Sequence, sgRNA2_WGE_ID, sgRNA2_WGE_Sequence) %>%
+      dplyr::mutate(SEQ_pair = paste0(sgRNA1_WGE_Sequence, "~", sgRNA2_WGE_Sequence))
+    
+    data[[i]] <- left_join(data[[i]], tmp, by = "ID") %>%
+      dplyr::filter(!duplicated(SEQ_pair))
+    
+    # get same order as in data (possible removal of the same SEQ_pair)
+    library[[i]] <-  library[[i]][match(data[[i]]$ID, library[[i]]$ID),] %>%
+      dplyr::mutate(lib = curr_lib, .after = ID) %>%
+      dplyr::mutate(ID_lib = paste(ID, curr_lib, sep = "_"), .after = lib) %>%
+      dplyr::mutate(SEQ_pair = paste0(sgRNA1_WGE_Sequence, "~", sgRNA2_WGE_Sequence))
+    
+    if ("MyNotes" %in% colnames(library[[i]])) {
+      library[[i]] <- library[[i]] %>%
+        dplyr::select(-MyNotes)
+    }
+  }
+  names(data) <- names(library) <- lib_name
+  
+  return(list(data = data, library = library))
+  
+}
+
+
+
+
 # modify combat function from DepMap -  Sanger integration paper
 ComBatCP <- function(dat, batch, mod = NULL, par.prior = TRUE, prior.plots = FALSE,
                      mean.only = FALSE, ref.batch = NULL, BPPARAM = bpparam("SerialParam"),
@@ -253,8 +360,8 @@ harmonize_per_CL <- function(list_df){
   for (i in 1:length(list_df)) {
     tmp <- as.data.frame(list_df[[i]])
     rownames(tmp) <- tmp$SEQ_pair
-    tmp <- tmp[, grepl("_LFC_RAW",colnames(tmp))]
-    colnames(tmp) <- str_split_fixed(string = colnames(tmp), pattern = "[_]", n = 4)[,1]
+    tmp <- tmp[, grepl("SIDM",colnames(tmp))]
+    # colnames(tmp) <- str_split_fixed(string = colnames(tmp), pattern = "[_]", n = 4)[,1]
     colnames(tmp) <- model_encore_table$model_name_CMP[match(colnames(tmp), model_encore_table$model_id_CMP)]
     mat[[i]] <- t(tmp) 
   }
@@ -290,13 +397,14 @@ combat_correction <- function(list_df,
 
   # annotate combat res and plot
   df_annot <- mapply(function(x, y) 
-    x[match(rownames(y), x$SEQ_pair), !grepl("LFC_RAW", colnames(x))], 
-    x = data[names(data_common)], y = data_common, SIMPLIFY = FALSE)
+    x[match(rownames(y), x$SEQ_pair), !grepl("SIDM", colnames(x))], 
+    x = list_df, y = data_common, SIMPLIFY = FALSE)
+  
   df_annot_unique <- data.frame(SEQ_pair = df_annot[[1]]$SEQ_pair, 
                                 Gene_Pair = df_annot[[1]]$Gene, 
-                                Note1 = apply(sapply(df_annot, function(x) x$Note1), 
+                                Note1 = apply(sapply(df_annot, function(x) x$Note), 
                                               1, function(y) paste0(sort(unique(y)), collapse = ",")), 
-                                Note2 = apply(sapply(df_annot, function(x) x$Note2), 
+                                Note2 = apply(sapply(df_annot, function(x) x$MyNote), 
                                               1, function(y) paste0(sort(unique(y)), collapse = ",")))
   
   colnames(ComBat_res$gamma.star) <- colnames(ComBat_res$delta.star) <- df_annot_unique$SEQ_pair
@@ -922,7 +1030,8 @@ sorted_dist <- function(mat_common){
   
 
 plot_dist_PPV <- function(list_df,  
-                          outfold){
+                          save_plot = FALSE,
+                          outfold = NULL){
   
   res_combat <- combat_correction(list_df, 
                                   save_plot = FALSE,
@@ -974,19 +1083,19 @@ plot_dist_PPV <- function(list_df,
   pl <- ggpubr::ggarrange(plotlist = list(pl1, pl2), ncol = 2, 
                           common.legend = TRUE)
   print(pl)
-    
-  ggsave(filename = sprintf("%sPPV_CL-lib.png", outfold), 
-         units = "in", 
-         plot = pl, 
-         width = 7, 
-         height = 4)
-  
-  
+  if (save_plot) {
+    ggsave(filename = sprintf("%sPPV_CL-lib.png", outfold), 
+           units = "in", 
+           plot = pl, 
+           width = 7, 
+           height = 4)
+  }
 }
 
 
-plot_dist_commonpairs <- function(list_df,  
-                                  outfold){
+plot_dist_commonpairs <- function(list_df,
+                                  save_plot = FALSE, 
+                                  outfold = NULL){
   
   res_combat <- combat_correction(list_df, 
                                   save_plot = FALSE,
@@ -1003,6 +1112,7 @@ plot_dist_commonpairs <- function(list_df,
                                        type_dist = c(rep("same", nrow(dist_combat$CLs)), rep("different", nrow(dist_combat$CLs))), 
                                        type_combat = "ComBat Corrected"))
   CL_dist$type_combat <- factor(CL_dist$type_combat, levels = c("Raw", "ComBat Corrected"))
+  
   pl1 <- ggplot(CL_dist , aes(x = type_combat,
                               y = dist,
                               fill = type_dist)) +
@@ -1032,12 +1142,14 @@ plot_dist_commonpairs <- function(list_df,
   pl <- ggpubr::ggarrange(plotlist = list(pl2, pl1), ncol = 2, common.legend = TRUE)
   print(pl)
   
-  ggsave(filename = sprintf("%sinside_and_outside_distance_same_CL-lib.png", outfold), 
-         units = "in", 
-         plot = pl, 
-         width = 7, 
-         height = 4)
-  
+  if (save_plot) {
+    ggsave(filename = sprintf("%sinside_and_outside_distance_same_CL-lib.png", outfold), 
+           units = "in", 
+           plot = pl, 
+           width = 7, 
+           height = 4)
+  }
+
   return(list(CL = CL_dist, 
               lib = libs_dist))
   
@@ -1162,10 +1274,11 @@ compute_auc <- function(id_lib,
 
 # combine all validation strategies:
 validate_NN_approximation <- function(list_df, 
-                                      outfold){
+                                      save_plot = FALSE,
+                                      outfold = NULL){
   
   res <- combat_correction(list_df, 
-                           save_plot = TRUE, 
+                           save_plot = save_plot, 
                            show_plot = TRUE, 
                            outfold = outfold)
   
@@ -1196,10 +1309,13 @@ validate_NN_approximation <- function(list_df,
     ylab("Cohen's d:\n |param_i - neigh.| VS |param_i - not neigh.|") +
     theme_bw()
   print(pl)
-  ggsave(plot = pl, 
-         filename = sprintf("%svalidation_kNN_cohensd.png", outfold), 
-         width = 6, 
-         height = 4)
+  if (save_plot) {
+    ggsave(plot = pl, 
+           filename = sprintf("%svalidation_kNN_cohensd.png", outfold), 
+           width = 6, 
+           height = 4)    
+  }
+ 
   
   # varying prob quantile
   quant_list <- c(0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
@@ -1222,10 +1338,13 @@ validate_NN_approximation <- function(list_df,
     ylab("Cohen's d:\n |param_i - neigh.| VS |param_i - not neigh.|") +
     theme_bw()
   print(pl)
-  ggsave(plot = pl, 
-         filename = sprintf("%svalidation_radius_cohensd.png", outfold), 
-         width = 6, 
-         height = 4)
+  if (save_plot) {
+    ggsave(plot = pl, 
+           filename = sprintf("%svalidation_radius_cohensd.png", outfold), 
+           width = 6, 
+           height = 4)
+    
+  }
   
   count_na <- as.data.frame(table(is.na(df_quant$cohens_d), df_quant$quant_prob)) %>%
     mutate(Var1 = case_when(Var1 == "TRUE" ~ "no guide pairs in the range", 
@@ -1240,13 +1359,12 @@ validate_NN_approximation <- function(list_df,
     theme_bw() +
     theme(legend.position = "bottom")
   print(pl)
-  
-  ggsave(plot = pl, 
-         filename = sprintf("%scountNA_radius.png", outfold), 
-         width = 4, 
-         height = 4)
-  
-  
+  if (save_plot) {
+    ggsave(plot = pl, 
+           filename = sprintf("%scountNA_radius.png", outfold), 
+           width = 4, 
+           height = 4)
+  }
   ### Validation 2:
   # create TPR, FPR. Compare the selection of closest kNN with the "closest" param
   auc_kNN <- data.frame()
@@ -1267,11 +1385,13 @@ validate_NN_approximation <- function(list_df,
     ylab("AUROC") +
     theme_bw()
   print(pl)
+  if (save_plot) {
+    ggsave(plot = pl, 
+           filename = sprintf("%svalidation_kNN_AUC.png", outfold), 
+           width = 6, 
+           height = 4)
+  }
   
-  ggsave(plot = pl, 
-         filename = sprintf("%svalidation_kNN_AUC.png", outfold), 
-         width = 6, 
-         height = 4)
   
   return(list(cohensd_kNN = df_kNN, 
               cohensd_range = df_quant, 
