@@ -1,5 +1,5 @@
 # Batch Correction for ENCORE data:
-
+## PROJECT ARCHIVED! This step was integrated in the overall pipeline
 ### Aim:
 Correct raw logFC across COLO and BRCA libraries (independentily). 
 
